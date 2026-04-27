@@ -2683,16 +2683,22 @@ function renderAI(raw) {
 
       var warnDiv = document.createElement('div');
     warnDiv.style.cssText = 'padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:6px;margin:4px';
-    warnDiv.innerHTML = '<div style="font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px">⚡ Configure o Cloudflare Worker</div>' +
-      '<div style="font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px">A análise IA requer um proxy intermediário quando rodando no GitHub Pages. Leva 3 minutos e é 100% gratuito.</div>';
+    var warnTitle = document.createElement('div');
+    warnTitle.style.cssText = 'font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px';
+    warnTitle.textContent = '⚡ Configure o Cloudflare Worker';
+    var warnDesc = document.createElement('div');
+    warnDesc.style.cssText = 'font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px';
+    warnDesc.textContent = 'A análise IA requer um proxy no GitHub Pages. Leva 3 min e é gratuito.';
     var warnBtn = document.createElement('button');
     warnBtn.className = 'btn btn-primary';
     warnBtn.style.fontSize = '.74rem';
-    warnBtn.textContent = '⚡ Configurar agora →';
+    warnBtn.textContent = '⚡ Configurar agora';
     warnBtn.onclick = function(){ goPage('config'); showWorkerInstructions(); };
+    warnDiv.appendChild(warnTitle);
+    warnDiv.appendChild(warnDesc);
     warnDiv.appendChild(warnBtn);
-    document.getElementById('ai-body').innerHTML = '';
-    document.getElementById('ai-body').appendChild(warnDiv);
+    var _aiBody = document.getElementById('ai-body');
+    if(_aiBody){ _aiBody.innerHTML = ''; _aiBody.appendChild(warnDiv); }
 }
 
 function md2h(md) {
@@ -2764,16 +2770,22 @@ function renderAI(raw) {
 
       var warnDiv = document.createElement('div');
     warnDiv.style.cssText = 'padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:6px;margin:4px';
-    warnDiv.innerHTML = '<div style="font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px">⚡ Configure o Cloudflare Worker</div>' +
-      '<div style="font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px">A análise IA requer um proxy intermediário quando rodando no GitHub Pages. Leva 3 minutos e é 100% gratuito.</div>';
+    var warnTitle = document.createElement('div');
+    warnTitle.style.cssText = 'font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px';
+    warnTitle.textContent = '⚡ Configure o Cloudflare Worker';
+    var warnDesc = document.createElement('div');
+    warnDesc.style.cssText = 'font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px';
+    warnDesc.textContent = 'A análise IA requer um proxy no GitHub Pages. Leva 3 min e é gratuito.';
     var warnBtn = document.createElement('button');
     warnBtn.className = 'btn btn-primary';
     warnBtn.style.fontSize = '.74rem';
-    warnBtn.textContent = '⚡ Configurar agora →';
+    warnBtn.textContent = '⚡ Configurar agora';
     warnBtn.onclick = function(){ goPage('config'); showWorkerInstructions(); };
+    warnDiv.appendChild(warnTitle);
+    warnDiv.appendChild(warnDesc);
     warnDiv.appendChild(warnBtn);
-    document.getElementById('ai-body').innerHTML = '';
-    document.getElementById('ai-body').appendChild(warnDiv);
+    var _aiBody = document.getElementById('ai-body');
+    if(_aiBody){ _aiBody.innerHTML = ''; _aiBody.appendChild(warnDiv); }
 }
 
 function md2h(md) {
@@ -3472,14 +3484,20 @@ async function triggerAnalysis(ticker){
   const hasWorker = (cfg.workerUrl||'').trim().length > 0;
   if(onGH && !hasWorker){
     var _wb = document.createElement('div');
-    _wb.style.cssText = 'padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:6px';
-    _wb.innerHTML = '<div style="font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px">⚡ Configure o Cloudflare Worker</div>' +
-      '<div style="font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px">A análise IA requer um proxy no GitHub Pages. Leva 3 min e é grátis.</div>';
+    _wb.style.cssText = 'padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:6px;margin:4px';
+    var _wt = document.createElement('div');
+    _wt.style.cssText = 'font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px';
+    _wt.textContent = '⚡ Configure o Cloudflare Worker';
+    var _wd = document.createElement('div');
+    _wd.style.cssText = 'font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px';
+    _wd.textContent = 'A análise IA requer um proxy no GitHub Pages. Leva 3 min e é gratuito.';
     var _wbtn = document.createElement('button');
     _wbtn.className = 'btn btn-primary';
     _wbtn.style.fontSize = '.74rem';
-    _wbtn.textContent = '⚡ Configurar agora →';
+    _wbtn.textContent = '⚡ Configurar agora';
     _wbtn.onclick = function(){ goPage('config'); showWorkerInstructions(); };
+    _wb.appendChild(_wt);
+    _wb.appendChild(_wd);
     _wb.appendChild(_wbtn);
     var _aib = document.getElementById('ai-body');
     if(_aib){ _aib.innerHTML = ''; _aib.appendChild(_wb); }
