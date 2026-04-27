@@ -2587,6 +2587,8 @@ Liste e quantifique os riscos:
 }
 
 async function callClaude(key, system, user) {
+  if (!key) throw new Error('Configure a API Key Anthropic em ⚙️ Config.');
+
   const payload = JSON.stringify({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4000,
@@ -2594,63 +2596,53 @@ async function callClaude(key, system, user) {
     messages: [{ role: 'user', content: user }]
   });
 
-  // Proxy list — ordered by priority
-  // Worker 1: our own Cloudflare Worker (deploy once, works forever from any origin)
-  // Worker 2: direct (works only from localhost/non-CORS-restricted context)
-  const WORKER_URL = cfg.workerUrl || '';
+  const workerUrl = (cfg.workerUrl || '').trim();
 
-  const attempts = [];
-
-  // 1. Custom Cloudflare Worker (user can deploy their own)
-  if (WORKER_URL) {
-    attempts.push({ label: 'worker', url: WORKER_URL });
-  }
-
-  // 2. Direct call (GitHub Pages is blocked by Anthropic CORS, but try anyway)
-  attempts.push({ label: 'direct', url: 'https://api.anthropic.com/v1/messages' });
-
-  let lastErr;
-  for (const { label, url } of attempts) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': key,
-          'anthropic-version': '2023-06-01'
-        },
-        body: payload
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const msg = err.error?.message || 'HTTP ' + res.status;
-        if (res.status === 401 || res.status === 403)
-          throw new Error('API Key inválida: ' + msg);
-        lastErr = new Error(msg);
-        continue;
-      }
-      const data = await res.json();
-      return data.content.filter(b => b.type === 'text').map(b => b.text).join('
-');
-    } catch(e) {
-      lastErr = e;
-      if (e.message.startsWith('API Key')) throw e;
+  // If worker URL configured — use it (solves CORS for GitHub Pages)
+  if (workerUrl) {
+    const res = await fetch(workerUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01'
+      },
+      body: payload
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error?.message || 'Worker HTTP ' + res.status);
     }
+    const data = await res.json();
+    return data.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   }
 
-  // All attempts failed — show actionable error
-  throw new Error(
-    'CORS bloqueado pela Anthropic.
+  // No worker configured — show clear setup message
+  const isGitHub = window.location.hostname.includes('github.io');
+  if (isGitHub) {
+    showWorkerInstructions();
+    throw new Error(
+      'É necessário configurar um Cloudflare Worker para usar a análise IA no GitHub Pages.\n' +
+      'Um guia foi aberto em ⚙️ Config. Leva 3 minutos e é gratuito.'
+    );
+  }
 
-' +
-    'Solução: configure um Cloudflare Worker proxy:
-' +
-    '1. Acesse workers.cloudflare.com (conta gratuita)
-' +
-    '2. Crie um Worker com o código em ⚙️ Config → Worker
-' +
-    '3. Cole a URL do worker no campo "Worker URL" e salve'
-  );
+  // Try direct (works on localhost)
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01'
+    },
+    body: payload
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.error?.message || 'HTTP ' + res.status);
+  }
+  const data = await res.json();
+  return data.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
 }
 
 function renderAI(raw) {
@@ -3453,6 +3445,21 @@ async function triggerAnalysis(ticker){
   document.getElementById('btn-reanalyze').style.display='block';
   const key=getAnthro();
   if(!key){document.getElementById('ai-body').innerHTML='<div style="text-align:center;padding:24px;color:var(--t3);font-size:.75rem">Configure sua API Key Anthropic em ⚙️ Config.</div>';return;}
+  // Warn about CORS if on GitHub Pages and no worker configured
+  const onGH = window.location.hostname.includes('github.io');
+  const hasWorker = (cfg.workerUrl||'').trim().length > 0;
+  if(onGH && !hasWorker){
+    document.getElementById('ai-body').innerHTML =
+      '<div style="padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:var(--r);margin:4px">' +
+      '<div style="font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px">⚡ Configure o Cloudflare Worker</div>' +
+      '<div style="font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px">' +
+      'A análise IA requer um proxy intermediário quando rodando no GitHub Pages. ' +
+      'Leva 3 minutos e é 100% gratuito.</div>' +
+      '<button onclick="goPage('config');showWorkerInstructions()" class="btn btn-primary" style="font-size:.74rem">' +
+      '⚡ Configurar agora →</button>' +
+      '</div>';
+    return;
+  }
   document.getElementById('ai-body').innerHTML='<div class="ai-spin-wrap"><div class="ai-spin"></div><div class="ai-step" id="ai-step">Coletando fundamentos…</div></div>';
   let qf=null;
   try{qf=await brapiGet(ticker,{fundamental:'true',dividends:'true',modules:'summaryProfile,defaultKeyStatistics,financialData'});}catch(e){try{qf=await brapiGet(ticker);}catch(e2){}}
@@ -4480,6 +4487,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
   renderChips();
   updateNotifStatus();
+  // Show "required" badge on worker field if on GitHub Pages without worker configured
+  if (window.location.hostname.includes('github.io')) {
+    var badge = document.getElementById('worker-required-badge');
+    if (badge && !(cfg.workerUrl||'').trim()) badge.style.display = 'inline';
+    // Auto-open config hint toast
+    if (!(cfg.workerUrl||'').trim()) {
+      setTimeout(function() {
+        showToast({
+          title: '⚡ Configure o Worker IA',
+          msg: 'Vá em ⚙️ Config e configure o Cloudflare Worker para usar análise IA.',
+          type: 'warn',
+          duration: 8000,
+          onClick: function() { goPage('config'); showWorkerInstructions(); }
+        });
+      }, 2000);
+    }
+  }
   // Auto-prompt notif if has alerts and not dismissed
   if (S.alerts.length && !localStorage.getItem('notif_banner_dismissed') && ('Notification' in window) && Notification.permission === 'default') {
     var b = document.getElementById('notif-banner'); if (b) b.classList.add('show');
@@ -4849,7 +4873,7 @@ setInterval(function() {
 
       <!-- Worker URL -->
       <div class="fg" style="margin-top:12px">
-        <label>Cloudflare Worker URL (para análise IA no GitHub Pages)</label>
+        <label style="display:flex;align-items:center;gap:6px">Cloudflare Worker URL <span id="worker-required-badge" style="display:none;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);color:var(--yellow);border-radius:3px;padding:1px 6px;font-size:.56rem;font-weight:700">⚡ NECESSÁRIO</span></label>
         <input type="text" id="cfg-worker" placeholder="https://seu-worker.seu-usuario.workers.dev"
           autocomplete="off" style="font-family:var(--mono);font-size:.72rem">
         <span style="font-size:.62rem;color:var(--t4);line-height:1.6;margin-top:3px;display:block">
