@@ -989,54 +989,31 @@ async function brapiGet(ticker, params = {}) {
   const p = new URLSearchParams({ token: getToken(), ...params });
   const directUrl = 'https://brapi.dev/api/quote/' + ticker + '?' + p;
 
-  const isLocal = window.location.protocol === 'http:' &&
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  // Read workerUrl fresh from DOM
+  var _wEl = document.getElementById('cfg-worker');
+  if (_wEl && _wEl.value.trim()) cfg.workerUrl = _wEl.value.trim();
+  const workerBase = (cfg.workerUrl || '').trim().replace(/\/$/, '');
 
-  // Strategy list — local proxy first if available
   const strategies = [];
 
-  if (isLocal) {
-    // Local server proxy — zero CORS issues
+  // 1. Via Worker /brapi route (works from GitHub Pages — no CORS, no token issues)
+  if (workerBase) {
     strategies.push(async () => {
-      const qs = 'ticker=' + ticker + '&' + p.toString();
-      const r = await fetch(window.location.origin + '/proxy/brapi?' + qs);
-      if (!r.ok) throw new Error('local proxy HTTP ' + r.status);
+      const qs = new URLSearchParams({ ticker, ...Object.fromEntries(p) }).toString();
+      const r = await fetch(workerBase + '/brapi?' + qs);
+      if (!r.ok) throw new Error('worker-brapi HTTP ' + r.status);
       return await r.json();
     });
   }
 
-  // Direct fetch (GitHub Pages / HTTPS)
+  // 2. Direct fetch (works on localhost)
   strategies.push(async () => {
     const r = await fetch(directUrl, { mode: 'cors' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return await r.json();
   });
 
-  // JSONP via <script> — bypassa CORS em qualquer contexto
-  strategies.push(() => new Promise((resolve, reject) => {
-    const cbName = '_brapi_cb_' + Date.now();
-    const extra  = Array.from(p.entries())
-      .filter(([k]) => k !== 'token')
-      .map(([k,v]) => k + '=' + encodeURIComponent(v)).join('&');
-    const src = 'https://brapi.dev/api/quote/' + ticker +
-      '?token=' + getToken() + (extra ? '&' + extra : '') + '&callback=' + cbName;
-    const script = document.createElement('script');
-    const t = setTimeout(() => {
-      script.remove(); delete window[cbName];
-      reject(new Error('JSONP timeout'));
-    }, 10000);
-    window[cbName] = (data) => {
-      clearTimeout(t); script.remove(); delete window[cbName];
-      if (data.error || (!data.results?.length && data.historicalDataPrice === undefined))
-        reject(new Error('"' + ticker + '" não encontrado na B3'));
-      else resolve(data);
-    };
-    script.src = src;
-    script.onerror = () => { clearTimeout(t); script.remove(); reject(new Error('JSONP falhou')); };
-    document.head.appendChild(script);
-  }));
-
-  // allorigins fallback
+  // 3. allorigins fallback
   strategies.push(async () => {
     const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(directUrl));
     if (!r.ok) throw new Error('allorigins HTTP ' + r.status);
@@ -1044,7 +1021,7 @@ async function brapiGet(ticker, params = {}) {
     return JSON.parse(w.contents);
   });
 
-  let lastErr = new Error('Todos os métodos falharam');
+  let lastErr = new Error('Todos os métodos falharam para ' + ticker);
   for (const strategy of strategies) {
     try {
       const data = await strategy();
@@ -4979,33 +4956,59 @@ setInterval(function() {
             </div>
             <pre id="worker-code" style="background:var(--s3);border:1px solid var(--bd);border-radius:var(--r);padding:12px;font-family:var(--mono);font-size:.65rem;color:var(--t2);overflow-x:auto;line-height:1.7;white-space:pre">export default {
   async fetch(request) {
+    const url = new URL(request.url);
+    const cors = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, x-api-key, anthropic-version, anthropic-beta",
+    };
+
     if (request.method === "OPTIONS") {
-      return new Response(null, {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, x-api-key, anthropic-version, anthropic-beta",
-        },
+      return new Response(null, { status: 204, headers: cors });
+    }
+
+    // Health check
+    if (request.method === "GET" && url.pathname === "/") {
+      return new Response(JSON.stringify({ status: "ok", service: "TradeDesk AI Proxy" }), {
+        headers: { "Content-Type": "application/json", ...cors },
       });
     }
-    const body = await request.text();
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": request.headers.get("x-api-key") || "",
-        "anthropic-version": request.headers.get("anthropic-version") || "2023-06-01",
-      },
-      body,
-    });
-    const data = await resp.text();
-    return new Response(data, {
-      status: resp.status,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
+
+    // Proxy brapi.dev — GET /brapi/:ticker?token=...&range=...
+    if (request.method === "GET" && url.pathname.startsWith("/brapi/")) {
+      const ticker = url.pathname.replace("/brapi/", "");
+      const qs = url.searchParams.toString();
+      const brapiUrl = "https://brapi.dev/api/quote/" + ticker + (qs ? "?" + qs : "");
+      const resp = await fetch(brapiUrl, {
+        headers: { "User-Agent": "TradeDesk/3.0" }
+      });
+      const data = await resp.text();
+      return new Response(data, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...cors },
+      });
+    }
+
+    // Proxy Anthropic — POST /
+    if (request.method === "POST") {
+      const body = await request.text();
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": request.headers.get("x-api-key") || "",
+          "anthropic-version": request.headers.get("anthropic-version") || "2023-06-01",
+        },
+        body,
+      });
+      const data = await resp.text();
+      return new Response(data, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...cors },
+      });
+    }
+
+    return new Response("Not found", { status: 404, headers: cors });
   },
 };</pre>
           </div>
