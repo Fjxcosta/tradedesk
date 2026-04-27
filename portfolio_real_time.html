@@ -4470,12 +4470,11 @@ function importBackup(event) {
     try {
       var data = JSON.parse(e.target.result);
       if (!data.version || !data.carteira) {
-        showToast({ title: 'Arquivo inválido', msg: 'Esse arquivo não é um backup do TradeDesk.', type: 'danger' });
+        showToast({ title: 'Arquivo invalido', msg: 'Esse arquivo nao e um backup do TradeDesk.', type: 'danger' });
         return;
       }
-      // Confirm before overwriting
-      if (!confirm('Importar backup de ' + (data.exportedAt || '?') + '? ISTO VAI SUBSTITUIR sua carteira, alertas e historico atuais.')) return;
-
+      var msg = 'Importar backup de ' + (data.exportedAt || '?') + '? Isso vai substituir carteira, alertas e historico.';
+      if (!confirm(msg)) return;
       if (data.carteira)   localStorage.setItem('carteira_v4',        data.carteira);
       if (data.alerts)     localStorage.setItem('alerts_v1',          data.alerts);
       if (data.journal)    localStorage.setItem('journal_v1',         data.journal);
@@ -4485,29 +4484,23 @@ function importBackup(event) {
         localStorage.setItem('cfg_v2', data.cfg);
         try { cfg = Object.assign({}, cfg, JSON.parse(data.cfg)); } catch(ex) {}
       }
-
-      // Reload state completely
       loadData();
       loadConfig();
       renderChips();
       updateBadge();
       updateAlertBadge();
-      // If modal is open, refresh it
       var modal = document.getElementById('cart-modal');
-      if (modal && modal.classList.contains('open')) {
-        refreshCart();
-      }
-
+      if (modal && modal.classList.contains('open')) refreshCart();
       var st = document.getElementById('backup-status');
-      if(st) st.textContent = '✓ Backup importado com sucesso!';
-      showToast({ title: '✅ Backup importado!', msg: 'Carteira e dados restaurados. Recarregue o app.', type: 'success', duration: 5000 });
-
-      // Reset file input
+      if (st) st.textContent = 'Backup importado com sucesso!';
+      showToast({ title: 'Backup importado!', msg: 'Dados restaurados. Recarregue a pagina para ver tudo.', type: 'success', duration: 5000 });
       event.target.value = '';
     } catch(err) {
       showToast({ title: 'Erro ao importar', msg: err.message, type: 'danger' });
     }
   };
+  reader.readAsText(file);
+};
   reader.readAsText(file);
 }
 
