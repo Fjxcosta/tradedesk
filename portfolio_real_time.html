@@ -989,82 +989,72 @@ async function brapiGet(ticker, params = {}) {
   const p = new URLSearchParams({ token: getToken(), ...params });
   const directUrl = 'https://brapi.dev/api/quote/' + ticker + '?' + p;
 
-  // Proxy strategies ordered by reliability for file:// origin
-  // - thingproxy: aceita null origin, retorna raw JSON
-  // - jsonp via script tag: contorna CORS completamente
-  // - allorigins.win com mode no-cors fallback
-  const strategies = [
-    // 1. Direto (funciona em HTTPS/localhost)
-    async () => {
-      const r = await fetch(directUrl, { mode: 'cors' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return await r.json();
-    },
-    // 2. thingproxy — aceita null origin
-    async () => {
-      const r = await fetch('https://thingproxy.freeboard.io/fetch/' + directUrl);
-      if (!r.ok) throw new Error('thingproxy HTTP ' + r.status);
-      return await r.json();
-    },
-    // 3. corsproxy.io
-    async () => {
-      const r = await fetch('https://corsproxy.io/?' + encodeURIComponent(directUrl));
-      if (!r.ok) throw new Error('corsproxy HTTP ' + r.status);
-      return await r.json();
-    },
-    // 4. allorigins — retorna {contents: "..."}
-    async () => {
-      const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(directUrl));
-      if (!r.ok) throw new Error('allorigins HTTP ' + r.status);
-      const w = await r.json();
-      return JSON.parse(w.contents);
-    },
-    // 5. JSONP via <script> tag — bypassa CORS completamente
-    async () => {
-      return new Promise((resolve, reject) => {
-        const cbName = '_brapi_' + Date.now();
-        const jsonpUrl = 'https://brapi.dev/api/quote/' + ticker +
-          '?token=' + getToken() +
-          (params.range ? '&range=' + params.range : '') +
-          (params.interval ? '&interval=' + params.interval : '') +
-          (params.fundamental ? '&fundamental=' + params.fundamental : '') +
-          '&callback=' + cbName;
-        const script = document.createElement('script');
-        const timeout = setTimeout(() => {
-          script.remove();
-          delete window[cbName];
-          reject(new Error('JSONP timeout'));
-        }, 8000);
-        window[cbName] = (data) => {
-          clearTimeout(timeout);
-          script.remove();
-          delete window[cbName];
-          if (data.error || !data.results?.length)
-            reject(new Error('"' + ticker + '" não encontrado'));
-          else resolve(data);
-        };
-        script.src = jsonpUrl;
-        script.onerror = () => { clearTimeout(timeout); script.remove(); reject(new Error('JSONP error')); };
-        document.head.appendChild(script);
-      });
-    },
-  ];
+  const isLocal = window.location.protocol === 'http:' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-  let lastErr = new Error('Nenhuma estratégia funcionou');
+  // Strategy list — local proxy first if available
+  const strategies = [];
+
+  if (isLocal) {
+    // Local server proxy — zero CORS issues
+    strategies.push(async () => {
+      const qs = 'ticker=' + ticker + '&' + p.toString();
+      const r = await fetch(window.location.origin + '/proxy/brapi?' + qs);
+      if (!r.ok) throw new Error('local proxy HTTP ' + r.status);
+      return await r.json();
+    });
+  }
+
+  // Direct fetch (GitHub Pages / HTTPS)
+  strategies.push(async () => {
+    const r = await fetch(directUrl, { mode: 'cors' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  });
+
+  // JSONP via <script> — bypassa CORS em qualquer contexto
+  strategies.push(() => new Promise((resolve, reject) => {
+    const cbName = '_brapi_cb_' + Date.now();
+    const extra  = Array.from(p.entries())
+      .filter(([k]) => k !== 'token')
+      .map(([k,v]) => k + '=' + encodeURIComponent(v)).join('&');
+    const src = 'https://brapi.dev/api/quote/' + ticker +
+      '?token=' + getToken() + (extra ? '&' + extra : '') + '&callback=' + cbName;
+    const script = document.createElement('script');
+    const t = setTimeout(() => {
+      script.remove(); delete window[cbName];
+      reject(new Error('JSONP timeout'));
+    }, 10000);
+    window[cbName] = (data) => {
+      clearTimeout(t); script.remove(); delete window[cbName];
+      if (data.error || (!data.results?.length && data.historicalDataPrice === undefined))
+        reject(new Error('"' + ticker + '" não encontrado na B3'));
+      else resolve(data);
+    };
+    script.src = src;
+    script.onerror = () => { clearTimeout(t); script.remove(); reject(new Error('JSONP falhou')); };
+    document.head.appendChild(script);
+  }));
+
+  // allorigins fallback
+  strategies.push(async () => {
+    const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(directUrl));
+    if (!r.ok) throw new Error('allorigins HTTP ' + r.status);
+    const w = await r.json();
+    return JSON.parse(w.contents);
+  });
+
+  let lastErr = new Error('Todos os métodos falharam');
   for (const strategy of strategies) {
     try {
       const data = await strategy();
-      // Normalize: strategy 1/2/3/4 retornam objeto brapi direto
-      // JSONP retorna objeto brapi direto também
-      if (data && data.results && data.results.length) return data.results[0];
-      if (data && data.error) throw new Error('"' + ticker + '" não encontrado na B3');
-      // se não tem results mas não tem erro, pode ser historicalDataPrice
-      if (data && data.historicalDataPrice !== undefined) return data;
-      throw new Error('Resposta inesperada da API');
+      if (data?.results?.length) return data.results[0];
+      if (data?.historicalDataPrice !== undefined) return data;
+      if (data?.error) throw new Error('"' + ticker + '" não encontrado na B3');
+      throw new Error('Resposta inesperada');
     } catch(e) {
       lastErr = e;
-      if (e.message.includes('não encontrado')) throw e; // ticker inválido, não tenta mais
-      // continua para próxima estratégia
+      if (e.message.includes('não encontrado')) throw e;
     }
   }
   throw lastErr;
@@ -2597,67 +2587,70 @@ Liste e quantifique os riscos:
 }
 
 async function callClaude(key, system, user) {
-  const body = JSON.stringify({
+  const payload = JSON.stringify({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4000,
     system,
     messages: [{ role: 'user', content: user }]
   });
 
-  // Strategy 1: direct (works on HTTPS / localhost)
-  // Strategy 2: via thingproxy (works on file://)
-  // Strategy 3: via corsproxy.io
-  const endpoints = [
-    {
-      url: 'https://api.anthropic.com/v1/messages',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01'
-      }
-    },
-    {
-      url: 'https://thingproxy.freeboard.io/fetch/https://api.anthropic.com/v1/messages',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01'
-      }
-    },
-    {
-      url: 'https://corsproxy.io/?https%3A%2F%2Fapi.anthropic.com%2Fv1%2Fmessages',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01'
-      }
-    }
-  ];
+  // Proxy list — ordered by priority
+  // Worker 1: our own Cloudflare Worker (deploy once, works forever from any origin)
+  // Worker 2: direct (works only from localhost/non-CORS-restricted context)
+  const WORKER_URL = cfg.workerUrl || '';
 
-  let lastErr = new Error('Falha ao conectar com Claude API');
-  for (const ep of endpoints) {
+  const attempts = [];
+
+  // 1. Custom Cloudflare Worker (user can deploy their own)
+  if (WORKER_URL) {
+    attempts.push({ label: 'worker', url: WORKER_URL });
+  }
+
+  // 2. Direct call (GitHub Pages is blocked by Anthropic CORS, but try anyway)
+  attempts.push({ label: 'direct', url: 'https://api.anthropic.com/v1/messages' });
+
+  let lastErr;
+  for (const { label, url } of attempts) {
     try {
-      const res = await fetch(ep.url, {
+      const res = await fetch(url, {
         method: 'POST',
-        headers: ep.headers,
-        body
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01'
+        },
+        body: payload
       });
       if (!res.ok) {
-        const e = await res.json().catch(() => ({}));
-        const msg = e.error?.message || 'HTTP ' + res.status;
-        // Auth errors — no point retrying other proxies
-        if (res.status === 401 || res.status === 403) throw new Error('API Key inválida: ' + msg);
+        const err = await res.json().catch(() => ({}));
+        const msg = err.error?.message || 'HTTP ' + res.status;
+        if (res.status === 401 || res.status === 403)
+          throw new Error('API Key inválida: ' + msg);
         lastErr = new Error(msg);
         continue;
       }
       const data = await res.json();
-      return data.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+      return data.content.filter(b => b.type === 'text').map(b => b.text).join('
+');
     } catch(e) {
       lastErr = e;
-      if (e.message.includes('API Key')) throw e; // auth error, don't retry
+      if (e.message.startsWith('API Key')) throw e;
     }
   }
-  throw lastErr;
+
+  // All attempts failed — show actionable error
+  throw new Error(
+    'CORS bloqueado pela Anthropic.
+
+' +
+    'Solução: configure um Cloudflare Worker proxy:
+' +
+    '1. Acesse workers.cloudflare.com (conta gratuita)
+' +
+    '2. Crie um Worker com o código em ⚙️ Config → Worker
+' +
+    '3. Cole a URL do worker no campo "Worker URL" e salve'
+  );
 }
 
 function renderAI(raw) {
@@ -3207,7 +3200,7 @@ Abertura do Ibovespa, dólar, commodities relevantes, setores em destaque, fluxo
 'use strict';
 /* ═══ CONFIG & STATE ═══════════════════════════ */
 const BRAPI_TOKEN = '5J4Pmw4X4CWB5hncsSQHQ3';
-let cfg = { token:BRAPI_TOKEN, anthro:'', capital:0, riskOp:2, riskTotal:10 };
+let cfg = { token:BRAPI_TOKEN, anthro:'', capital:0, riskOp:2, riskTotal:10, workerUrl:'' };
 // Load persisted config IMMEDIATELY so getToken()/getAnthro() work before DOM is ready
 (function(){
   try{
@@ -4264,6 +4257,8 @@ function saveConfig(){
   // Only update if user actually typed something
   if(tokVal) cfg.token  = tokVal;
   if(antVal) cfg.anthro = antVal;
+  var wrkEl=document.getElementById('cfg-worker');
+  if(wrkEl && wrkEl.value.trim()) cfg.workerUrl = wrkEl.value.trim();
   if(capEl && capEl.value!=='') cfg.capital  = parseFloat(capEl.value)||0;
   if(ropEl && ropEl.value!=='') cfg.riskOp   = parseFloat(ropEl.value)||2;
   if(rtEl  && rtEl.value!=='')  cfg.riskTotal = parseFloat(rtEl.value)||10;
@@ -4273,6 +4268,8 @@ function saveConfig(){
   if(st) st.textContent='✓ Salvo às '+new Date().toLocaleTimeString('pt-BR');
   if(tokVal) showSaved('cfg-token-saved');
   if(antVal) showSaved('cfg-anthro-saved');
+  var wrkEl3=document.getElementById('cfg-worker');
+  if(wrkEl3 && wrkEl3.value.trim()){ cfg.workerUrl=wrkEl3.value.trim(); }
 }
 function showSaved(id){
   var el=document.getElementById(id);
@@ -4300,6 +4297,8 @@ function loadConfig(){
     // Fill token — show actual value (masked by type=password)
     if(tokEl) tokEl.value = (cfg.token && cfg.token!==BRAPI_TOKEN) ? cfg.token : '';
     if(antEl) antEl.value = cfg.anthro || '';
+    var wrkEl2=document.getElementById('cfg-worker');
+    if(wrkEl2) wrkEl2.value = cfg.workerUrl || '';
     if(capEl) capEl.value = cfg.capital || '';
     if(ropEl) ropEl.value = cfg.riskOp;
     if(rtEl)  rtEl.value  = cfg.riskTotal;
@@ -4332,6 +4331,23 @@ function toggleVis(inputId, eyeId){
     inp.type='password';
     if(eye) eye.textContent='👁';
   }
+}
+function showWorkerInstructions(){
+  var m=document.getElementById('worker-modal');
+  if(m){m.style.display='flex';}
+}
+function closeWorkerModal(){
+  var m=document.getElementById('worker-modal');
+  if(m){m.style.display='none';}
+}
+function copyWorkerCode(){
+  var el=document.getElementById('worker-code');
+  if(!el)return;
+  navigator.clipboard.writeText(el.textContent).then(function(){
+    showToast({title:'Código copiado!',msg:'Cole no editor do Cloudflare Worker.',type:'success',duration:3000});
+  }).catch(function(){
+    showToast({title:'Selecione manualmente',msg:'Ctrl+A no código acima para selecionar tudo.',type:'warn',duration:4000});
+  });
 }
 function clearConfig(){
   if(!confirm('Remover tokens e API keys salvos?'))return;
@@ -4420,7 +4436,7 @@ document.addEventListener('DOMContentLoaded', function() {
   if (reanalyzeBtn) reanalyzeBtn.addEventListener('click', function() { triggerAnalysis(); });
 
   // Auto-save config fields on blur — NEVER overwrite with empty value
-  ['cfg-token','cfg-anthro','cfg-capital','cfg-risk-op','cfg-risk-total'].forEach(function(id) {
+  ['cfg-token','cfg-anthro','cfg-worker','cfg-capital','cfg-risk-op','cfg-risk-total'].forEach(function(id) {
     var el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('blur', function() {
@@ -4428,6 +4444,7 @@ document.addEventListener('DOMContentLoaded', function() {
       // For sensitive fields: only update if user typed something
       if (id === 'cfg-token')    { if (val) { cfg.token    = val; showSaved('cfg-token-saved'); } }
       if (id === 'cfg-anthro')   { if (val) { cfg.anthro   = val; showSaved('cfg-anthro-saved'); } }
+      if (id === 'cfg-worker')   { cfg.workerUrl = val; }
       // For numeric fields: always update (empty = 0 is valid)
       if (id === 'cfg-capital')   cfg.capital   = parseFloat(val)||0;
       if (id === 'cfg-risk-op')   cfg.riskOp    = parseFloat(val)||2;
@@ -4830,13 +4847,82 @@ setInterval(function() {
         <span id="cfg-anthro-saved" style="font-family:var(--mono);font-size:.6rem;color:var(--green);display:none">✓ Salvo</span>
       </div>
 
-      <div style="margin-top:12px;padding:10px 12px;background:rgba(59,130,246,.05);border:1px solid rgba(59,130,246,.15);border-radius:var(--r);font-size:.68rem;color:var(--t3);line-height:1.65">
-        💡 Sem API Key Anthropic, a análise IA não funciona. O brapi.dev tem plano gratuito suficiente para uso pessoal. Os dados são salvos apenas no seu navegador (localStorage).
+      <!-- Worker URL -->
+      <div class="fg" style="margin-top:12px">
+        <label>Cloudflare Worker URL (para análise IA no GitHub Pages)</label>
+        <input type="text" id="cfg-worker" placeholder="https://seu-worker.seu-usuario.workers.dev"
+          autocomplete="off" style="font-family:var(--mono);font-size:.72rem">
+        <span style="font-size:.62rem;color:var(--t4);line-height:1.6;margin-top:3px;display:block">
+          Necessário para usar análise IA no GitHub Pages. Configure uma vez — gratuito e permanente.
+          <button onclick="showWorkerInstructions()" style="background:none;border:none;color:var(--acc);cursor:pointer;font-size:.62rem;text-decoration:underline;padding:0">Como criar →</button>
+        </span>
+      </div>
+
+      <div style="margin-top:12px;padding:10px 12px;background:rgba(16,185,129,.04);border:1px solid rgba(16,185,129,.12);border-radius:var(--r);font-size:.67rem;color:var(--t3);line-height:1.7">
+        💡 Token brapi e API Key são salvos no navegador. O Worker URL resolve o bloqueio CORS da Anthropic no GitHub Pages.
       </div>
 
       <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
         <button class="btn btn-primary" style="padding:9px 18px" onclick="saveConfig()">💾 Salvar</button>
         <button class="btn btn-danger btn-sm" onclick="clearConfig()">🗑 Limpar tokens</button>
+      </div>
+
+      <!-- Worker instructions modal -->
+      <div id="worker-modal" style="display:none;position:fixed;inset:0;background:rgba(5,5,6,.92);backdrop-filter:blur(12px);z-index:2000;align-items:center;justify-content:center;padding:16px">
+        <div style="background:var(--s1);border:1px solid var(--bd2);border-radius:var(--r4);max-width:620px;width:100%;padding:24px;box-shadow:var(--sh3);max-height:90vh;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <div style="font-weight:700;font-size:.95rem">⚡ Configurar Cloudflare Worker</div>
+            <button onclick="closeWorkerModal()" style="background:var(--s3);border:1px solid var(--bd);color:var(--t3);border-radius:4px;width:26px;height:26px;cursor:pointer;font-size:.8rem;display:flex;align-items:center;justify-content:center">✕</button>
+          </div>
+          <div style="font-size:.75rem;color:var(--t2);line-height:1.8">
+            <div style="margin-bottom:12px;padding:10px 12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.15);border-radius:var(--r);font-size:.72rem">
+              ✅ <strong>Gratuito</strong> — 100.000 requisições/dia no plano free da Cloudflare. Leva ~3 minutos para configurar.
+            </div>
+            <div style="font-weight:700;color:var(--t1);margin-bottom:8px;font-size:.8rem">Passo a passo:</div>
+            <div style="counter-reset:steps">
+              <div style="display:flex;gap:10px;margin-bottom:10px"><span style="background:var(--acc);color:#000;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;flex-shrink:0">1</span><span>Acesse <a href="https://workers.cloudflare.com" target="_blank" style="color:var(--acc)">workers.cloudflare.com</a> e crie uma conta gratuita</span></div>
+              <div style="display:flex;gap:10px;margin-bottom:10px"><span style="background:var(--acc);color:#000;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;flex-shrink:0">2</span><span>Clique em <strong>Create a Worker</strong></span></div>
+              <div style="display:flex;gap:10px;margin-bottom:10px"><span style="background:var(--acc);color:#000;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;flex-shrink:0">3</span><span>Apague todo o código e cole o código abaixo</span></div>
+              <div style="display:flex;gap:10px;margin-bottom:10px"><span style="background:var(--acc);color:#000;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;flex-shrink:0">4</span><span>Clique em <strong>Deploy</strong> e copie a URL gerada (ex: <code style="color:var(--acc)">https://meu-worker.usuario.workers.dev</code>)</span></div>
+              <div style="display:flex;gap:10px;margin-bottom:14px"><span style="background:var(--acc);color:#000;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;flex-shrink:0">5</span><span>Cole a URL no campo <strong>Worker URL</strong> acima e salve</span></div>
+            </div>
+            <div style="font-weight:700;color:var(--t1);margin-bottom:8px;font-size:.78rem;display:flex;justify-content:space-between;align-items:center">
+              <span>📋 Código do Worker:</span>
+              <button onclick="copyWorkerCode()" style="background:var(--s3);border:1px solid var(--bd);color:var(--acc);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:.65rem;font-family:var(--sans);font-weight:600">Copiar</button>
+            </div>
+            <pre id="worker-code" style="background:var(--s3);border:1px solid var(--bd);border-radius:var(--r);padding:12px;font-family:var(--mono);font-size:.65rem;color:var(--t2);overflow-x:auto;line-height:1.7;white-space:pre">export default {
+  async fetch(request) {
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, x-api-key, anthropic-version, anthropic-beta",
+        },
+      });
+    }
+    const body = await request.text();
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": request.headers.get("x-api-key") || "",
+        "anthropic-version": request.headers.get("anthropic-version") || "2023-06-01",
+      },
+      body,
+    });
+    const data = await resp.text();
+    return new Response(data, {
+      status: resp.status,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  },
+};</pre>
+          </div>
+        </div>
       </div>
       <div id="cfg-status" style="font-family:var(--mono);font-size:.63rem;color:var(--green);margin-top:7px"></div>
     </div>
