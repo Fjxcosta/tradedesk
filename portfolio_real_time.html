@@ -1525,9 +1525,38 @@ async function callClaude(key, system, user) {
 }
 
 function renderAI(raw) {
-  let verdict = null;
-  // Extract JSON verdict — must be on its own line
-  const jm = raw.match(/\n?\{"verdict"\s*:\s*"(BUY|HOLD|SELL)"[^}]*\}
+  var verdict = null;
+  var cleanRaw = raw;
+  // Find JSON verdict block using string search (avoids complex regex)
+  var vidx = raw.indexOf('{"verdict"');
+  if (vidx === -1) vidx = raw.indexOf('"verdict"');
+  if (vidx !== -1) {
+    var vstart = raw.lastIndexOf('{', vidx);
+    var vend   = raw.indexOf('}', vidx);
+    if (vstart !== -1 && vend !== -1) {
+      var jstr = raw.slice(vstart, vend + 1);
+      try {
+        var jv = JSON.parse(jstr);
+        if (jv.verdict) {
+          verdict = { v: jv.verdict, conf: jv.confidence || 0, sum: jv.summary || '' };
+          cleanRaw = raw.slice(0, vstart) + raw.slice(vend + 1);
+        }
+      } catch(e) {}
+    }
+  }
+  var html = '<div class="ai-content fu">' + md2h(cleanRaw.trim()) + '</div>';
+  if (verdict) {
+    var vcls = verdict.v === 'BUY' ? 'v-buy' : verdict.v === 'SELL' ? 'v-sell' : 'v-hold';
+    var vico = verdict.v === 'BUY' ? '🟢' : verdict.v === 'SELL' ? '🔴' : '🟡';
+    var vlbl = verdict.v === 'BUY' ? 'COMPRAR' : verdict.v === 'SELL' ? 'VENDER' : 'AGUARDAR';
+    html += '<div class="verdict ' + vcls + '">';
+    html += '<div class="v-ico">' + vico + '</div>';
+    html += '<div><div class="v-label">' + vlbl + ' · ' + verdict.conf + '% confiança</div>';
+    html += '<div class="v-sub">' + (verdict.sum || '') + '</div></div></div>';
+  }
+  var ab = document.getElementById('ai-body');
+  if (ab) ab.innerHTML = html;
+}
 
 function md2h(md) {
   // Process tables first (before other replacements break pipe chars)
