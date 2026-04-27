@@ -2570,7 +2570,7 @@ async function callClaude(key, system, user) {
   if (!key) throw new Error('Configure a API Key Anthropic em ⚙️ Config.');
 
   const payload = JSON.stringify({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-3-5-sonnet-20241022',
     max_tokens: 4000,
     system,
     messages: [{ role: 'user', content: user }]
@@ -4425,22 +4425,34 @@ function copyWorkerCode(){
   });
 }
 function exportBackup() {
+  // Include current cfg from memory (most up-to-date, including tokens)
+  var cfgCurrent = JSON.parse(localStorage.getItem('cfg_v2') || '{}');
+  // Merge with in-memory cfg to capture any unsaved changes
+  Object.assign(cfgCurrent, {
+    token:     cfg.token     || cfgCurrent.token,
+    anthro:    cfg.anthro    || cfgCurrent.anthro,
+    workerUrl: cfg.workerUrl || cfgCurrent.workerUrl,
+    capital:   cfg.capital   || cfgCurrent.capital,
+    riskOp:    cfg.riskOp    || cfgCurrent.riskOp,
+    riskTotal: cfg.riskTotal || cfgCurrent.riskTotal,
+  });
   var data = {
-    version: 3,
+    version: 4,
     exportedAt: new Date().toISOString(),
-    carteira:    localStorage.getItem('carteira_v4')    || '{}',
-    alerts:      localStorage.getItem('alerts_v1')      || '[]',
-    journal:     localStorage.getItem('journal_v1')     || '[]',
+    appVersion: document.title,
+    carteira:    localStorage.getItem('carteira_v4')       || '{}',
+    alerts:      localStorage.getItem('alerts_v1')         || '[]',
+    journal:     localStorage.getItem('journal_v1')        || '[]',
     invHistory:  localStorage.getItem('invest_history_v1') || '[]',
-    recHistory:  localStorage.getItem('rec_history_v1') || '[]',
-    cfg:         localStorage.getItem('cfg_v2')         || '{}',
+    recHistory:  localStorage.getItem('rec_history_v1')    || '[]',
+    cfg:         JSON.stringify(cfgCurrent),
   };
   var json = JSON.stringify(data, null, 2);
   var blob = new Blob([json], { type: 'application/json' });
   var url  = URL.createObjectURL(blob);
   var a    = document.createElement('a');
   a.href   = url;
-  a.download = 'tradedesk-backup-' + new Date().toISOString().slice(0,10) + '.json';
+  a.download = 'tradedesk-backup-' + new Date().toISOString().slice(0,16).replace('T','-').replace(':','h') + '.json';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -4476,10 +4488,17 @@ ISTO VAI SUBSTITUIR sua carteira, alertas e histórico atuais.')) return;
         try { cfg = Object.assign({}, cfg, JSON.parse(data.cfg)); } catch(ex) {}
       }
 
-      // Reload state
+      // Reload state completely
       loadData();
       loadConfig();
       renderChips();
+      updateBadge();
+      updateAlertBadge();
+      // If modal is open, refresh it
+      var modal = document.getElementById('cart-modal');
+      if (modal && modal.classList.contains('open')) {
+        refreshCart();
+      }
 
       var st = document.getElementById('backup-status');
       if(st) st.textContent = '✓ Backup importado com sucesso!';
