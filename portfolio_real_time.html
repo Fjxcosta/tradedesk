@@ -2681,7 +2681,18 @@ function renderAI(raw) {
     '</div>';
   }
 
-  document.getElementById('ai-body').innerHTML = '<div class="ai-content fu">' + html + '</div>';
+      var warnDiv = document.createElement('div');
+    warnDiv.style.cssText = 'padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:6px;margin:4px';
+    warnDiv.innerHTML = '<div style="font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px">⚡ Configure o Cloudflare Worker</div>' +
+      '<div style="font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px">A análise IA requer um proxy intermediário quando rodando no GitHub Pages. Leva 3 minutos e é 100% gratuito.</div>';
+    var warnBtn = document.createElement('button');
+    warnBtn.className = 'btn btn-primary';
+    warnBtn.style.fontSize = '.74rem';
+    warnBtn.textContent = '⚡ Configurar agora →';
+    warnBtn.onclick = function(){ goPage('config'); showWorkerInstructions(); };
+    warnDiv.appendChild(warnBtn);
+    document.getElementById('ai-body').innerHTML = '';
+    document.getElementById('ai-body').appendChild(warnDiv);
 }
 
 function md2h(md) {
@@ -2751,7 +2762,18 @@ function renderAI(raw) {
     '</div>';
   }
 
-  document.getElementById('ai-body').innerHTML = '<div class="ai-content fu">' + html + '</div>';
+      var warnDiv = document.createElement('div');
+    warnDiv.style.cssText = 'padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:6px;margin:4px';
+    warnDiv.innerHTML = '<div style="font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px">⚡ Configure o Cloudflare Worker</div>' +
+      '<div style="font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px">A análise IA requer um proxy intermediário quando rodando no GitHub Pages. Leva 3 minutos e é 100% gratuito.</div>';
+    var warnBtn = document.createElement('button');
+    warnBtn.className = 'btn btn-primary';
+    warnBtn.style.fontSize = '.74rem';
+    warnBtn.textContent = '⚡ Configurar agora →';
+    warnBtn.onclick = function(){ goPage('config'); showWorkerInstructions(); };
+    warnDiv.appendChild(warnBtn);
+    document.getElementById('ai-body').innerHTML = '';
+    document.getElementById('ai-body').appendChild(warnDiv);
 }
 
 function md2h(md) {
@@ -3449,15 +3471,18 @@ async function triggerAnalysis(ticker){
   const onGH = window.location.hostname.includes('github.io');
   const hasWorker = (cfg.workerUrl||'').trim().length > 0;
   if(onGH && !hasWorker){
-    document.getElementById('ai-body').innerHTML =
-      '<div style="padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:var(--r);margin:4px">' +
-      '<div style="font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px">⚡ Configure o Cloudflare Worker</div>' +
-      '<div style="font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px">' +
-      'A análise IA requer um proxy intermediário quando rodando no GitHub Pages. ' +
-      'Leva 3 minutos e é 100% gratuito.</div>' +
-      '<button onclick="goPage('config');showWorkerInstructions()" class="btn btn-primary" style="font-size:.74rem">' +
-      '⚡ Configurar agora →</button>' +
-      '</div>';
+    var _wb = document.createElement('div');
+    _wb.style.cssText = 'padding:18px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:6px';
+    _wb.innerHTML = '<div style="font-weight:700;font-size:.82rem;color:var(--yellow);margin-bottom:8px">⚡ Configure o Cloudflare Worker</div>' +
+      '<div style="font-size:.74rem;color:var(--t2);line-height:1.75;margin-bottom:12px">A análise IA requer um proxy no GitHub Pages. Leva 3 min e é grátis.</div>';
+    var _wbtn = document.createElement('button');
+    _wbtn.className = 'btn btn-primary';
+    _wbtn.style.fontSize = '.74rem';
+    _wbtn.textContent = '⚡ Configurar agora →';
+    _wbtn.onclick = function(){ goPage('config'); showWorkerInstructions(); };
+    _wb.appendChild(_wbtn);
+    var _aib = document.getElementById('ai-body');
+    if(_aib){ _aib.innerHTML = ''; _aib.appendChild(_wb); }
     return;
   }
   document.getElementById('ai-body').innerHTML='<div class="ai-spin-wrap"><div class="ai-spin"></div><div class="ai-step" id="ai-step">Coletando fundamentos…</div></div>';
