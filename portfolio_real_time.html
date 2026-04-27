@@ -3565,14 +3565,31 @@ function removeAporte(ticker,idx){
 }
 function addAporteTo(ticker){document.getElementById('cf-ticker').value=ticker;document.getElementById('form-lbl').textContent='➕ Novo aporte em '+ticker;document.getElementById('cf-qty').focus();}
 async function refreshCart(){
-  const tickers=Object.keys(S.cart);if(!tickers.length){renderPos();updateCartSumm();return;}
-  document.getElementById('cart-upd').textContent='Atualizando…';
+  const tickers=Object.keys(S.cart);
+  // Render immediately with saved data (so positions always show even if API fails)
+  renderPos();updateCartSumm();
+  if(!tickers.length) return;
+  document.getElementById('cart-upd').textContent='Atualizando preços…';
   for(const t of tickers){
-    try{const q=await brapiGet(t);Object.assign(S.cart[t],{currentPrice:q.regularMarketPrice,changePct:q.regularMarketChangePercent,changeAbs:q.regularMarketChange,name:q.shortName||t,sector:q.summaryProfile?.sector||'',dividendYield:q.defaultKeyStatistics?.dividendYield||null,dividendsData:q.dividendsData||null});}catch(e){}
+    try{
+      const q=await brapiGet(t);
+      Object.assign(S.cart[t],{
+        currentPrice:q.regularMarketPrice,
+        changePct:q.regularMarketChangePercent,
+        changeAbs:q.regularMarketChange,
+        name:q.shortName||t,
+        sector:q.summaryProfile?.sector||''
+      });
+    }catch(e){
+      // API failed for this ticker — keep existing cached data, don't wipe positions
+      console.warn('refreshCart failed for', t, e.message);
+    }
     await new Promise(r=>setTimeout(r,300));
   }
   document.getElementById('cart-upd').textContent='Atualizado: '+new Date().toLocaleTimeString('pt-BR');
+  // Re-render with fresh prices
   renderPos();updateCartSumm();
+  saveData();
 }
 function renderPos(){
   const wrap=document.getElementById('pos-list'),tickers=Object.keys(S.cart);
