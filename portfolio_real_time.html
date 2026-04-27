@@ -4474,9 +4474,7 @@ function importBackup(event) {
         return;
       }
       // Confirm before overwriting
-      if (!confirm('Importar backup de ' + (data.exportedAt || '?') + '?
-
-ISTO VAI SUBSTITUIR sua carteira, alertas e histórico atuais.')) return;
+      if (!confirm('Importar backup de ' + (data.exportedAt || '?') + '? ISTO VAI SUBSTITUIR sua carteira, alertas e historico atuais.')) return;
 
       if (data.carteira)   localStorage.setItem('carteira_v4',        data.carteira);
       if (data.alerts)     localStorage.setItem('alerts_v1',          data.alerts);
