@@ -2596,6 +2596,9 @@ async function callClaude(key, system, user) {
     messages: [{ role: 'user', content: user }]
   });
 
+  // Read workerUrl from DOM field first (in case cfg not synced)
+  var _wEl = document.getElementById('cfg-worker');
+  if (_wEl && _wEl.value.trim()) cfg.workerUrl = _wEl.value.trim();
   const workerUrl = (cfg.workerUrl || '').trim();
 
   // If worker URL configured — use it (solves CORS for GitHub Pages)
@@ -3258,8 +3261,25 @@ const R  = n => n==null||isNaN(n)?'—':'R$\u00A0'+Number(n).toLocaleString('pt-
 const P  = n => n==null||isNaN(n)?'—':(n>=0?'+':'')+Number(n).toFixed(2).replace('.',',')+'\u00A0%';
 const V  = n => { if(!n||isNaN(n))return'—'; n=Number(n); if(n>=1e12)return(n/1e12).toFixed(2)+'T'; if(n>=1e9)return(n/1e9).toFixed(2)+'B'; if(n>=1e6)return(n/1e6).toFixed(1)+'M'; if(n>=1e3)return(n/1e3).toFixed(0)+'K'; return n.toFixed(0); };
 const fR = n => 'R$\u00A0'+Math.abs(n).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
-const getToken  = ()=>cfg.token||BRAPI_TOKEN;
-const getAnthro = ()=>cfg.anthro;
+const getToken = () => {
+  var el = document.getElementById('cfg-token');
+  if (el && el.value.trim()) {
+    cfg.token = el.value.trim();
+    localStorage.setItem('cfg_v2', JSON.stringify(cfg));
+    return cfg.token;
+  }
+  return cfg.token || BRAPI_TOKEN;
+};
+const getAnthro = () => {
+  // Always read from DOM field first (most up-to-date value)
+  var el = document.getElementById('cfg-anthro');
+  if (el && el.value.trim()) {
+    cfg.anthro = el.value.trim(); // keep cfg in sync
+    localStorage.setItem('cfg_v2', JSON.stringify(cfg)); // persist immediately
+    return cfg.anthro;
+  }
+  return cfg.anthro || '';
+};
 
 /* ═══ TICKER INPUT ════════════════════════════ */
 function setLS(txt,loading=false){
