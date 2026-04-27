@@ -3205,13 +3205,21 @@ Abertura do Ibovespa, dólar, commodities relevantes, setores em destaque, fluxo
 <script>
 'use strict';
 /* ═══ CONFIG & STATE ═══════════════════════════ */
-const BRAPI_TOKEN = '5J4Pmw4X4CWB5hncsSQHQ3';
+const BRAPI_TOKEN = '6i74bKbrBofWxkPhAH6fWx'; // atualizado
 let cfg = { token:BRAPI_TOKEN, anthro:'', capital:0, riskOp:2, riskTotal:10, workerUrl:'' };
 // Load persisted config IMMEDIATELY so getToken()/getAnthro() work before DOM is ready
 (function(){
   try{
     var raw=localStorage.getItem('cfg_v2');
-    if(raw){ var p=JSON.parse(raw); cfg=Object.assign({},cfg,p); }
+    if(raw){
+      var p=JSON.parse(raw);
+      cfg=Object.assign({},cfg,p);
+      // Clear old expired token if still saved
+      if(cfg.token === '5J4Pmw4X4CWB5hncsSQHQ3'){
+        cfg.token = BRAPI_TOKEN;
+        localStorage.setItem('cfg_v2', JSON.stringify(cfg));
+      }
+    }
   }catch(e){}
 })();
 const S = {
