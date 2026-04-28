@@ -2889,20 +2889,40 @@ async function gerarRec(){
   try{
     if(S.recType==='cripto'){
       const raw=await gerarRecCripto(key,capital);renderCriptoRec(raw);
-      addRecToHist('CRIPTO','HOLD',70,'cripto',S.perf,0);
+      // Cripto recommendations don't provide stop/target values
+      addRecToHist('CRIPTO','HOLD',70,'cripto',S.perf,0,null,null);
     }else if(S.recType==='daytrade'){
       const text=await gerarRecDayTrade(key,capital);
       const jm=text.match(/\{"type":"daytrade".*?\}/);
       document.getElementById('rec-wrap').innerHTML='<div class="ai-content fu">'+md2h(jm?text.replace(jm[0],'').trim():text)+'</div>';
-      addRecToHist('DT-'+new Date().toLocaleDateString('pt-BR'),'HOLD',65,'daytrade',S.perf,0);
+      // Daytrade recommendations don't provide stop/target values
+      addRecToHist('DT-'+new Date().toLocaleDateString('pt-BR'),'HOLD',65,'daytrade',S.perf,0,null,null);
     }else{
       const prazo=S.recType==='semanal'?'semanal (1 semana)':document.getElementById('rec-prazo').value;
       const sys2='Você é um analista buy-side sênior do mercado brasileiro (B3). Seja específico, use tickers reais. Formate tabelas em markdown. Para cada ativo: preço atual, entrada ideal, alvo conservador, alvo otimista, stop loss, R/R.';
       const usr2='Monte recomendações '+S.recType+' para perfil '+S.perf+', prazo '+prazo+', capital R$ '+capital+'.\n\nConsidere: Selic ~14,75%, câmbio, risco fiscal.\n\n## Racional\n\n## Alocação\n| Ticker | Empresa | Setor | % | Preço Atual | Entrada | Alvo Conservador | Alvo Otimista | Stop | R/R | Tese |\n|---|---|---|---|---|---|---|---|---|---|---|\n\n## Simulação R$ '+capital+'\n| Ticker | % | Valor R$ | Qtd | Alvo Ganho | Stop Perda |\n|---|---|---|---|---|---|\n\n## Top 3 Picks Detalhados\n\n## Riscos\n\n## Revisão\n\nÚltima linha: {"verdict":"BUY","confidence":72,"ticker":"TOP_TICKER","summary":"Resumo"}';
       const text=await callClaude(key,sys2,usr2);
       const jm=text.match(/\{"verdict"\s*:\s*"(BUY|HOLD|SELL)"[^}]*\}/);
-      let verdict='HOLD',conf=70,tk='CARTEIRA';
-      if(jm){try{const j=JSON.parse(jm[0]);verdict=j.verdict;conf=j.confidence||70;tk=j.ticker||'CARTEIRA';}catch(e){}}
+      let verdict='HOLD', conf=70, tk='CARTEIRA', stopVal=null, targetVal=null;
+      if(jm){
+        try{
+          const j=JSON.parse(jm[0]);
+          verdict = j.verdict;
+          conf    = j.confidence || 70;
+          tk      = j.ticker || 'CARTEIRA';
+          // Extract stop/target values if present. Remove currency symbols and thousand separators.
+          if(j.stop){
+            const s = String(j.stop).replace(/[^0-9,\.-]/g,'').replace(',','.');
+            const n = parseFloat(s);
+            if(!isNaN(n)) stopVal = n;
+          }
+          if(j.target){
+            const s = String(j.target).replace(/[^0-9,\.-]/g,'').replace(',','.');
+            const n = parseFloat(s);
+            if(!isNaN(n)) targetVal = n;
+          }
+        }catch(e){}
+      }
       document.getElementById('rec-wrap').innerHTML='<div class="ai-content fu">'+md2h(jm?text.replace(jm[0],'').trim():text)+'</div>';
       // Capture current price for the recommended ticker to allow auto-outcome evaluation
       let recPrice=0;
@@ -2912,7 +2932,7 @@ async function gerarRec(){
           recPrice=pData && pData.regularMarketPrice!=null?pData.regularMarketPrice:0;
         }catch(_){recPrice=0;}
       }
-      addRecToHist(tk,verdict,conf,S.recType,S.perf,recPrice);
+      addRecToHist(tk, verdict, conf, S.recType, S.perf, recPrice, stopVal, targetVal);
     }
     updateAccuracy();
   }catch(e){document.getElementById('rec-wrap').innerHTML='<div style="color:var(--red);font-size:.77rem;padding:14px">Erro: '+e.message+'</div>';}
@@ -2920,7 +2940,30 @@ async function gerarRec(){
 }
 
 /* ═══ REC HISTORY & ACCURACY ══════════════════ */
-function addRecToHist(ticker,verdict,confidence,type,perfil,price){S.recHist.unshift({id:Date.now().toString(),ticker,verdict,confidence,type,perfil,price,date:new Date().toLocaleDateString('pt-BR'),outcome:'open',resultPct:null});localStorage.setItem('rec_history_v1',JSON.stringify(S.recHist));}
+function addRecToHist(ticker, verdict, confidence, type, perfil, price, stop, target){
+  // Push a new recommendation into history. Price represents the entry price at
+  // the time of the recommendation. Stop and target represent the analyst's
+  // suggested stop-loss and target values (if provided). These fields are
+  // optional and may be null if not supplied.
+  const rec = {
+    id: Date.now().toString(),
+    ticker: ticker,
+    verdict: verdict,
+    confidence: confidence,
+    type: type,
+    perfil: perfil,
+    price: price,
+    stop: typeof stop === 'number' && !isNaN(stop) ? stop : null,
+    target: typeof target === 'number' && !isNaN(target) ? target : null,
+    date: new Date().toLocaleDateString('pt-BR'),
+    outcome: 'open',
+    resultPct: null
+  };
+  S.recHist.unshift(rec);
+  // Trim history to a reasonable length if needed
+  if (S.recHist.length > 500) S.recHist = S.recHist.slice(0, 500);
+  localStorage.setItem('rec_history_v1', JSON.stringify(S.recHist));
+}
 function markRec(id,outcome,resultPct){const r=S.recHist.find(x=>x.id===id);if(!r)return;r.outcome=outcome;r.resultPct=resultPct||null;localStorage.setItem('rec_history_v1',JSON.stringify(S.recHist));updateAccuracy();renderRecHist();}
 function markRecLoss(id){const p=prompt('Variação % (ex: -8.5)');if(p!=null)markRec(id,'loss',p);}
 function removeRec(id){S.recHist=S.recHist.filter(r=>r.id!==id);localStorage.setItem('rec_history_v1',JSON.stringify(S.recHist));updateAccuracy();renderRecHist();}
@@ -2981,18 +3024,34 @@ async function autoUpdateRecommendations(){
     }
     if(cur == null || cur <= 0) continue;
     const pct = (cur - refPrice) / refPrice * 100;
-    const th  = 5; // 5% threshold for win/loss
-    const vp  = (pct>=0?'+':'') + pct.toFixed(2);
-    if(r.verdict === 'BUY'){
-      if(pct >= th){ markRec(r.id,'win', pct); continue; }
-      if(pct <= -th){ markRec(r.id,'loss', pct); continue; }
-    } else if(r.verdict === 'SELL'){
-      if(pct <= -th){ markRec(r.id,'win', pct); continue; }
-      if(pct >= th){ markRec(r.id,'loss', pct); continue; }
+    // If recommendation contains explicit stop/target values, use them. Otherwise fall back to a
+    // 5% threshold. Stop and target are absolute price levels, not percentages.
+    const tgt = typeof r.target === 'number' && !isNaN(r.target) ? r.target : null;
+    const stp = typeof r.stop   === 'number' && !isNaN(r.stop)   ? r.stop   : null;
+    // Determine outcome based on verdict. For BUY: win if price >= target; loss if price <= stop.
+    // For SELL: win if price <= target (price fell); loss if price >= stop (price rose). HOLD uses same logic as BUY.
+    if(tgt != null && stp != null){
+      if(r.verdict === 'BUY' || r.verdict === 'HOLD'){
+        if(cur >= tgt){ markRec(r.id,'win', pct); continue; }
+        if(cur <= stp){ markRec(r.id,'loss', pct); continue; }
+      } else if(r.verdict === 'SELL'){
+        if(cur <= tgt){ markRec(r.id,'win', pct); continue; }
+        if(cur >= stp){ markRec(r.id,'loss', pct); continue; }
+      }
     } else {
-      // HOLD — treat any significant move as outcome
-      if(pct >= th){ markRec(r.id,'win', pct); continue; }
-      if(pct <= -th){ markRec(r.id,'loss', pct); continue; }
+      // Fallback to fixed 5% threshold if no explicit stop/target
+      const th = 5;
+      if(r.verdict === 'BUY'){
+        if(pct >= th){ markRec(r.id,'win', pct); continue; }
+        if(pct <= -th){ markRec(r.id,'loss', pct); continue; }
+      } else if(r.verdict === 'SELL'){
+        if(pct <= -th){ markRec(r.id,'win', pct); continue; }
+        if(pct >= th){ markRec(r.id,'loss', pct); continue; }
+      } else {
+        // HOLD — treat any significant move as outcome
+        if(pct >= th){ markRec(r.id,'win', pct); continue; }
+        if(pct <= -th){ markRec(r.id,'loss', pct); continue; }
+      }
     }
   }
 }
