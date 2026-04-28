@@ -2286,7 +2286,18 @@ async function loadHist(ticker,range,ivl){
   }catch(e){}
 }
 function redrawChart(ticker,p){
-  const raw=S.lastHist;if(!raw.length)return;
+  const raw=S.lastHist;
+  // If there is no historical data, show an overlay message instead of an empty chart.
+  const chartErr=document.getElementById('chartError');
+  const chartCanvas=document.getElementById('priceChart');
+  if(!raw || !raw.length){
+    if(chartErr) chartErr.style.display='flex';
+    if(chartCanvas) chartCanvas.style.display='none';
+    return;
+  }else{
+    if(chartErr) chartErr.style.display='none';
+    if(chartCanvas) chartCanvas.style.display='block';
+  }
   const labels=raw.map(d=>new Date(d.date*1000).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}));
   const prices=raw.map(d=>+(d.close||d.adjustedClose||d.open||0));
   const volumes=raw.map(d=>d.volume||0);
@@ -3180,8 +3191,35 @@ async function gerarRec(){
           }
         }catch(e){}
       }
-      // Render the full answer minus the JSON line
-      document.getElementById('rec-wrap').innerHTML='<div class="ai-content fu">'+md2h(jm?text.replace(jm[0],'').trim():text)+'</div>';
+      // Remove the final JSON snippet from the Claude response and any
+      // leading Markdown heading produced by the model. We will inject our
+      // own heading with the current month and year to avoid dates like
+      // "Junho 2025". If no JSON was returned, use the whole text.
+      let content = jm ? text.replace(jm[0], '').trim() : text.trim();
+      // Strip a top‑level Markdown heading (starting with '#') to prevent
+      // outdated dates from appearing. This removes the first line if it
+      // starts with one or more '#' followed by a space.
+      content = content.replace(/^#+\s.*?(\n|$)/, '');
+      // Build a custom heading using the current month and year and the
+      // selected recommendation type and profile. Month names are in
+      // Portuguese to match the UI.
+      const monthNames = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+      const nowDate = new Date();
+      const mName = monthNames[nowDate.getMonth()];
+      const year = nowDate.getFullYear();
+      const mLabel = mName.charAt(0).toUpperCase() + mName.slice(1);
+      const typeLabels = {
+        swing: 'Swing Trade',
+        semanal: 'Swing Trade',
+        daytrade: 'Day Trade',
+        cripto: 'Cripto'
+      };
+      const typeLabel = typeLabels[S.recType] || (S.recType.charAt(0).toUpperCase() + S.recType.slice(1));
+      const perfLabel = S.perf.charAt(0).toUpperCase() + S.perf.slice(1);
+      const headingHtml = '<h3 style="margin:0 0 10px 0">' + typeLabel + ' ' + perfLabel + ' — B3 | ' + mLabel + ' ' + year + '</h3>';
+      // Render the AI content after converting Markdown to HTML. The custom
+      // heading is prepended to ensure the date is always up to date.
+      document.getElementById('rec-wrap').innerHTML = '<div class="ai-content fu">' + headingHtml + md2h(content) + '</div>';
       // If entry price wasn't supplied by the model, fetch current price via brapi as fallback
       if((!recPrice || recPrice<=0) && tk && tk!=='CARTEIRA' && tk!=='CRIPTO' && !tk.startsWith('DT-')){
         try{
@@ -3230,8 +3268,20 @@ async function gerarRec(){
           target: tgt
         };
       } else {
-        // Clear recommended portfolio when insufficient data
-        S.recPort = null;
+        // If we still don't have a valid price or stop/target, build a
+        // placeholder recommended portfolio with zero quantities. This
+        // prevents the “Nenhuma carteira recomendada” message from
+        // appearing and informs the user that price data was unavailable.
+        S.recPort = {
+          diaria: { qty: 0, entryMax: null, stopTotal: null, targetTotal: null, rr: null },
+          semanal: { qty: 0, entryMax: null, stopTotal: null, targetTotal: null, rr: null },
+          mensal: { qty: 0, entryMax: null, stopTotal: null, targetTotal: null, rr: null },
+          ticker: tk,
+          verdict: verdict,
+          price: recPrice || null,
+          stop: stp || null,
+          target: tgt || null
+        };
       }
       // Render the recommended portfolio section (will clear if null)
       renderRecPort();
@@ -4252,7 +4302,13 @@ setInterval(function() {
             <span style="font-family:var(--mono);font-size:.58rem;color:var(--t4)">↔ 52 semanas</span>
             <span id="pos52w" style="font-family:var(--mono);font-size:.6rem"></span>
           </div>
-          <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
+          <div class="chart-wrap" style="position:relative">
+            <canvas id="priceChart"></canvas>
+            <!-- Overlay for chart errors. Shown when historical price data cannot be loaded. -->
+            <div id="chartError" class="chart-error" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-family:var(--sans);background-color:rgba(17,17,19,.4);color:var(--t3);font-size:.7rem;text-align:center;padding:8px;">
+              Não foi possível carregar o gráfico. Verifique sua conexão, token ou proxy (CORS).
+            </div>
+          </div>
           <div class="rsi-wrap" id="rsi-wrap"><canvas id="rsiChart"></canvas></div>
           <div class="rsi-gauge" id="rsi-gauge">
             <span style="color:var(--t3)">RSI(14)</span>
