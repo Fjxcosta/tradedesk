@@ -3191,20 +3191,43 @@ async function gerarRec(){
       }
       // Store the recommendation in history
       addRecToHist(tk, verdict, conf, S.recType, S.perf, recPrice, stopVal, targetVal);
-      // Compute recommended portfolio only when price, stop and target are available. Use
-      // one third of the maximum per‑trade risk for each horizon (Diária, Semanal e Mensal).
-      if(recPrice && stopVal != null && targetVal != null && !isNaN(recPrice) && !isNaN(stopVal) && !isNaN(targetVal)){
+      // Derive stop and target if they are missing. Use the configured risk percentage per operation
+      // to estimate a reasonable stop level and a 2:1 reward ratio. For BUY/HOLD, stop is below
+      // entry; for SELL, stop is above entry. Target is derived by doubling the distance.
+      let stp = stopVal;
+      let tgt = targetVal;
+      const rPerc = (cfg && typeof cfg.riskOp === 'number' ? cfg.riskOp : 2) / 100;
+      if((stp == null || isNaN(stp)) && recPrice && recPrice > 0){
+        if(verdict === 'SELL'){
+          stp = recPrice * (1 + rPerc);
+        } else {
+          stp = recPrice * (1 - rPerc);
+        }
+      }
+      if((tgt == null || isNaN(tgt)) && recPrice && recPrice > 0){
+        // Distance from entry to stop
+        const dist = (verdict === 'SELL') ? (stp - recPrice) : (recPrice - stp);
+        const reward = dist * 2;
+        if(verdict === 'SELL'){
+          tgt = recPrice - reward;
+        } else {
+          tgt = recPrice + reward;
+        }
+      }
+      // Compute recommended portfolio if we have a valid price and stop/target. Use one third of
+      // the maximum per‑trade risk for each horizon (Diária, Semanal e Mensal).
+      if(recPrice && recPrice > 0 && stp != null && tgt != null && !isNaN(stp) && !isNaN(tgt)){
         const maxRisk = cfg.capital * cfg.riskOp / 100;
         const riskPerType = maxRisk / 3;
         S.recPort = {
-          diaria: computeRecPortfolio(recPrice, stopVal, targetVal, verdict, riskPerType),
-          semanal: computeRecPortfolio(recPrice, stopVal, targetVal, verdict, riskPerType),
-          mensal: computeRecPortfolio(recPrice, stopVal, targetVal, verdict, riskPerType),
+          diaria: computeRecPortfolio(recPrice, stp, tgt, verdict, riskPerType),
+          semanal: computeRecPortfolio(recPrice, stp, tgt, verdict, riskPerType),
+          mensal: computeRecPortfolio(recPrice, stp, tgt, verdict, riskPerType),
           ticker: tk,
           verdict: verdict,
           price: recPrice,
-          stop: stopVal,
-          target: targetVal
+          stop: stp,
+          target: tgt
         };
       } else {
         // Clear recommended portfolio when insufficient data
