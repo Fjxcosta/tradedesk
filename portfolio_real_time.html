@@ -1003,6 +1003,28 @@ async function brapiGet(ticker, params = {}) {
   const p = new URLSearchParams({ token: getToken(), ...params });
   const target = 'https://brapi.dev/api/quote/' + ticker + '?' + p;
 
+  // If the user has configured a Cloudflare Worker proxy (cfg.workerUrl),
+  // attempt to use it first. The Worker code bundled with this application
+  // exposes a `/brapi/:ticker` endpoint that forwards requests to
+  // brapi.dev while injecting permissive CORS headers. Using the proxy
+  // avoids CORS issues on GitHub Pages. If the proxy call fails we fall
+  // back to the generic public proxies defined below.
+  try {
+    if (typeof cfg !== 'undefined' && cfg.workerUrl && cfg.workerUrl.trim()) {
+      const base = cfg.workerUrl.replace(/\/*$/, '');
+      const url = base + '/brapi/' + encodeURIComponent(ticker) + (p.toString() ? '?' + p.toString() : '');
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (!data || data.error) throw new Error('"' + ticker + '" não encontrado');
+        const result = Array.isArray(data.results) ? data.results[0] : data;
+        if (result) return result;
+      }
+    }
+  } catch(e) {
+    // Ignore proxy errors and continue to other proxies.
+  }
+
   // Some browsers (notably when serving pages via GitHub Pages or other HTTPS
   // domains) enforce strict CORS policies and brapi.dev does not currently
   // return `Access‑Control‑Allow‑Origin` for arbitrary origins. To work
@@ -1387,12 +1409,17 @@ function buildCtx(ticker, q, p) {
   }
 
   // TDT data
+  // Retrieve the last TDT analysis from the state. `lastTDTResult` was
+  // previously referenced as a global variable, which could be undefined
+  // and cause a ReferenceError. Use `S.lastTDT` when available.  If
+  // unavailable, skip the TDT section gracefully.
+  const lastTDTResult = (typeof S !== 'undefined' && S.lastTDT) ? S.lastTDT : null;
   if (lastTDTResult) {
     L.push('\n═══ ANÁLISE TÉCNICA — TDT ═══');
-    L.push('Tendência curto prazo (MM20): ' + lastTDTResult.shortTrend.toUpperCase());
-    L.push('Tendência médio prazo (MM50): ' + lastTDTResult.midTrend.toUpperCase());
-    L.push('Tendência longo prazo (MM200): ' + lastTDTResult.longTrend.toUpperCase());
-    L.push('Estrutura de swings (Dow Theory): ' + lastTDTResult.swingTrend.toUpperCase());
+    L.push('Tendência curto prazo (MM20): ' + String(lastTDTResult.shortTrend || '').toUpperCase());
+    L.push('Tendência médio prazo (MM50): ' + String(lastTDTResult.midTrend || '').toUpperCase());
+    L.push('Tendência longo prazo (MM200): ' + String(lastTDTResult.longTrend || '').toUpperCase());
+    L.push('Estrutura de swings (Dow Theory): ' + String(lastTDTResult.swingTrend || '').toUpperCase());
     L.push('Veredicto TDT: ' + lastTDTResult.verdict);
     L.push('Alinhamento de tendência: ' + lastTDTResult.alignLabel);
     if (lastTDTResult.adxVal) L.push('ADX (força tendência): ' + lastTDTResult.adxVal.toFixed(1) + ' — ' + lastTDTResult.adxLabel);
@@ -1402,8 +1429,11 @@ function buildCtx(ticker, q, p) {
     if (lastTDTResult.mm200) L.push('MM200: R$' + lastTDTResult.mm200.toFixed(2));
   }
 
-  if (lastHistData.length > 1) {
-    const prices = lastHistData.map(d => d.close || 0);
+  // Technical indicators based on historical data
+  // Use the state's last history array instead of an undefined global variable.
+  const lastHistData = (typeof S !== 'undefined' && Array.isArray(S.lastHist)) ? S.lastHist : [];
+  if (lastHistData && lastHistData.length > 1) {
+    const prices = lastHistData.map(d => d.close || d.adjustedClose || 0);
     const rsiVals = rsi(prices, 14).filter(v => v !== null);
     if (rsiVals.length) L.push('RSI(14) Wilder: ' + rsiVals[rsiVals.length-1].toFixed(1));
     // Volume trend
