@@ -986,25 +986,58 @@ function switchTab(tab){
 
 <script>
 async function brapiGet(ticker, params = {}) {
-  // Build query params including the API token and any extra parameters
+  // Construct the target URL with our API token and any additional parameters.
   const p = new URLSearchParams({ token: getToken(), ...params });
-  const url = 'https://brapi.dev/api/quote/' + ticker + '?' + p;
-  // When running locally (file://) or in any context that may block CORS,
-  // use the AllOrigins "raw" endpoint, which proxies the request and returns
-  // the remote response with permissive CORS headers. This avoids
-  // "No 'Access‑Control‑Allow‑Origin'" errors in browsers.
-  const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
-  const fetchUrl = proxyUrl;
-  const res = await fetch(fetchUrl);
-  if (!res.ok) {
-    throw new Error('Erro ao acessar proxy (' + res.status + ')');
+  const target = 'https://brapi.dev/api/quote/' + ticker + '?' + p;
+
+  // Some browsers (notably when serving pages via GitHub Pages or other HTTPS
+  // domains) enforce strict CORS policies and brapi.dev does not currently
+  // return `Access‑Control‑Allow‑Origin` for arbitrary origins. To work
+  // around this we try a sequence of proxy URLs that inject permissive CORS
+  // headers. Each proxy has a slightly different URL format: the first entry
+  // uses the AllOrigins service which expects the target URL to be encoded
+  // after `?url=`, while the second uses the isomorphic-git CORS proxy which
+  // simply prepends the target URL. Additional proxies can be added here.
+  const proxies = [
+    // AllOrigins raw endpoint (works when the proxy itself is CORS‑enabled).
+    (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+    // Isomorphic Git CORS proxy (prepend the URL without encoding). See
+    // https://isomorphic-git.org/blog/2018/07/23/isomorphic-git-dot-org-corporate-sponsors-and-a-new-CORS-proxy for details.
+    (url) => 'https://cors.isomorphic-git.org/' + url,
+    // Thingproxy freeboard (simple fetch proxy). This service requires the
+    // target URL to be appended after /fetch/.
+    (url) => 'https://thingproxy.freeboard.io/fetch/' + url
+  ];
+
+  let lastError;
+  for (const proxy of proxies) {
+    const fetchUrl = proxy(target);
+    try {
+      const res = await fetch(fetchUrl);
+      if (!res.ok) {
+        // Save the last error to report if all proxies fail.
+        lastError = new Error('Proxy HTTP ' + res.status);
+        continue;
+      }
+      const data = await res.json();
+      if (!data || data.error) {
+        lastError = new Error('"' + ticker + '" não encontrado');
+        continue;
+      }
+      // brapi.dev returns an object with a `results` array; ensure it's valid.
+      const result = Array.isArray(data.results) ? data.results[0] : data;
+      if (!result) {
+        lastError = new Error('"' + ticker + '" não encontrado');
+        continue;
+      }
+      return result;
+    } catch (err) {
+      // If fetch itself fails (network/CORS), record the error and try next proxy.
+      lastError = err;
+    }
   }
-  // The raw proxy returns the original JSON from brapi.dev, so we can parse it directly
-  const data = await res.json();
-  if (data.error || !data.results?.length) {
-    throw new Error('"' + ticker + '" não encontrado');
-  }
-  return data.results[0];
+  // If we reach here none of the proxies succeeded.
+  throw lastError || new Error('Falha ao obter dados de "' + ticker + '"');
 }
 
 // Expose brapiGet globally so that functions defined in other scopes (e.g. inline
@@ -1530,12 +1563,37 @@ Liste e quantifique os riscos:
 }
 
 async function callClaude(key, system, user) {
+  // When calling Anthropic's API directly from the browser, the server will normally
+  // reject the request due to CORS. In August 2024 Anthropic introduced a
+  // special header (`anthropic-dangerous-direct-browser-access`) that signals
+  // to the API that the client is aware of the security implications and allows
+  // the browser request. Without this header, the browser will throw a
+  // "No 'Access‑Control‑Allow‑Origin' header" error. See
+  // https://simonwillison.net/2024/Aug/23/anthropic-browser-api/ for details.
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-3-5-sonnet-20241022', max_tokens: 4000, system, messages: [{ role:'user', content:user }] })
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      // Opt‑in to cross‑origin browser access. This header is required when
+      // making requests directly from a web page. Without it the API will
+      // refuse to respond with permissive CORS headers.
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    // Use CORS mode explicitly to satisfy browsers enforcing preflight checks.
+    mode: 'cors',
+    body: JSON.stringify({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 4000,
+      system,
+      messages: [{ role: 'user', content: user }]
+    })
   });
-  if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error?.message || 'HTTP ' + res.status); }
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.error?.message || 'HTTP ' + res.status);
+  }
   const data = await res.json();
   return data.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
 }
