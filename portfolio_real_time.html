@@ -986,16 +986,32 @@ function switchTab(tab){
 
 <script>
 async function brapiGet(ticker, params = {}) {
+  // Build query params including the API token and any extra parameters
   const p = new URLSearchParams({ token: getToken(), ...params });
   const url = 'https://brapi.dev/api/quote/' + ticker + '?' + p;
-  const proxy = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
-  const res = await fetch(proxy);
-  if (!res.ok) throw new Error('Proxy ' + res.status);
-  const w = await res.json();
-  const data = JSON.parse(w.contents);
-  if (data.error || !data.results?.length) throw new Error('"' + ticker + '" não encontrado');
+  // When running locally (file://) or in any context that may block CORS,
+  // use the AllOrigins "raw" endpoint, which proxies the request and returns
+  // the remote response with permissive CORS headers. This avoids
+  // "No 'Access‑Control‑Allow‑Origin'" errors in browsers.
+  const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
+  const fetchUrl = proxyUrl;
+  const res = await fetch(fetchUrl);
+  if (!res.ok) {
+    throw new Error('Erro ao acessar proxy (' + res.status + ')');
+  }
+  // The raw proxy returns the original JSON from brapi.dev, so we can parse it directly
+  const data = await res.json();
+  if (data.error || !data.results?.length) {
+    throw new Error('"' + ticker + '" não encontrado');
+  }
   return data.results[0];
 }
+
+// Expose brapiGet globally so that functions defined in other scopes (e.g. inline
+// HTML handlers or earlier scripts) can access it reliably. Without this,
+// definitions inside later <script> tags may not be visible when the page is
+// loaded via file:// protocol.
+window.brapiGet = brapiGet;
 
 function sma(data, period) {
   return data.map((_, i) => {
@@ -1738,9 +1754,9 @@ Liste 3-5 categorias ou ativos que parecem atrativos mas não têm fundamento:
 }
 
 function renderCriptoRec(raw) {
-  // Extract cycle summary JSON from the response string. The assistant will return
-  // a one‑line JSON object like {"type":"cripto_summary", ...}. We find and
-  // parse it safely. This prevents syntax errors from an unterminated regex.
+  // Extract cycle summary JSON from the response string. We search for the
+  // embedded object produced by the AI and parse it safely. This prevents
+  // syntax errors from unterminated regular expressions.
   let cycleSummary = null;
   const csm = raw.match(/\{"type":"cripto_summary"[^}]*\}/);
   if (csm) {
@@ -1750,7 +1766,7 @@ function renderCriptoRec(raw) {
       console.warn('Falha ao analisar resumo cripto', err);
     }
   }
-  // Expose the parsed summary on the global state for later use.
+  // Expose the parsed summary for later use if needed
   if (typeof S !== 'undefined') {
     S.cryptoSummary = cycleSummary;
   }
