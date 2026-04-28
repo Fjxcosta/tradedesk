@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<!-- TEST MODIFICATION -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -916,35 +915,64 @@ table.dt td { padding: 7px 9px; font-family: var(--mono); font-size: .69rem; whi
   50%      { background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.4); }
 }
 
-/* Styles for the recommended portfolio section. These rules govern
-   the appearance of the table displayed after generating a recommendation.
-   The table uses a smaller font and subtle separators consistent with the
-   overall dark theme. */
-#rec-portfolio .ptitle {
-  font-size: .85rem;
-  font-weight: 600;
-  margin-bottom: 6px;
-  color: var(--t1);
-}
-#rec-portfolio .rec-port-table {
+/*
+ * Recommended portfolio table styles. The table displays the suggested
+ * quantities, maximum entry value, stop and target totals and R/R ratios for
+ * three different horizons (Diária, Semanal e Mensal). Rows are separated
+ * by subtle borders and alternate backgrounds to improve readability. The
+ * overall font size is kept small to fit within the modal without
+ * crowding.
+ */
+.rec-port-table {
   width: 100%;
   border-collapse: collapse;
+  font-size: .72rem;
   margin-top: 4px;
 }
-#rec-portfolio .rec-port-table th,
-#rec-portfolio .rec-port-table td {
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--bd);
-  font-size: .72rem;
+.rec-port-table th,
+.rec-port-table td {
+  border: 1px solid var(--s3);
+  padding: 4px 6px;
+  text-align: center;
 }
-#rec-portfolio .rec-port-table th {
-  text-transform: uppercase;
-  letter-spacing: .02em;
+.rec-port-table th {
+  background: var(--s1);
   color: var(--t3);
+  font-weight: 600;
 }
-#rec-portfolio .rec-port-table td {
-  color: var(--t1);
+.rec-port-table tbody tr:nth-child(odd) {
+  background: var(--s1);
 }
+.rec-port-table tbody tr:nth-child(even) {
+  background: var(--s2);
+}
+
+/* Recommended portfolio cards. Each card uses a similar style to position
+ * rows but is simplified and color‑neutral. Cards show the recommended
+ * quantity and price levels for each horizon (diária, semanal, mensal).
+ */
+.rec-card {
+  background: var(--s1);
+  border: 1px solid var(--bd);
+  border-radius: var(--r3);
+  padding: 13px;
+  margin-bottom: 8px;
+  animation: fadeUp .15s ease;
+}
+.rec-card .pos-row-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.rec-card .pos-stats {
+  display: grid;
+  grid-template-columns: repeat(7,1fr);
+  gap: 5px;
+  margin-top: 10px;
+}
+
 
 </style>
 </head>
@@ -1034,6 +1062,28 @@ async function brapiGet(ticker, params = {}) {
   const p = new URLSearchParams({ token: getToken(), ...params });
   const target = 'https://brapi.dev/api/quote/' + ticker + '?' + p;
 
+  // If the user has configured a Cloudflare Worker proxy (cfg.workerUrl),
+  // attempt to use it first. The Worker code bundled with this application
+  // exposes a `/brapi/:ticker` endpoint that forwards requests to
+  // brapi.dev while injecting permissive CORS headers. Using the proxy
+  // avoids CORS issues on GitHub Pages. If the proxy call fails we fall
+  // back to the generic public proxies defined below.
+  try {
+    if (typeof cfg !== 'undefined' && cfg.workerUrl && cfg.workerUrl.trim()) {
+      const base = cfg.workerUrl.replace(/\/*$/, '');
+      const url = base + '/brapi/' + encodeURIComponent(ticker) + (p.toString() ? '?' + p.toString() : '');
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (!data || data.error) throw new Error('"' + ticker + '" não encontrado');
+        const result = Array.isArray(data.results) ? data.results[0] : data;
+        if (result) return result;
+      }
+    }
+  } catch(e) {
+    // Ignore proxy errors and continue to other proxies.
+  }
+
   // Some browsers (notably when serving pages via GitHub Pages or other HTTPS
   // domains) enforce strict CORS policies and brapi.dev does not currently
   // return `Access‑Control‑Allow‑Origin` for arbitrary origins. To work
@@ -1050,7 +1100,11 @@ async function brapiGet(ticker, params = {}) {
     (url) => 'https://cors.isomorphic-git.org/' + url,
     // Thingproxy freeboard (simple fetch proxy). This service requires the
     // target URL to be appended after /fetch/.
-    (url) => 'https://thingproxy.freeboard.io/fetch/' + url
+    (url) => 'https://thingproxy.freeboard.io/fetch/' + url,
+    // CORSProxy.io adds permissive CORS headers; note that it expects the full
+    // URL as a query parameter following `?` rather than path. See
+    // https://corsproxy.io for details.
+    (url) => 'https://corsproxy.io/?' + url
   ];
 
   let lastError;
@@ -1418,12 +1472,17 @@ function buildCtx(ticker, q, p) {
   }
 
   // TDT data
+  // Retrieve the last TDT analysis from the state. `lastTDTResult` was
+  // previously referenced as a global variable, which could be undefined
+  // and cause a ReferenceError. Use `S.lastTDT` when available.  If
+  // unavailable, skip the TDT section gracefully.
+  const lastTDTResult = (typeof S !== 'undefined' && S.lastTDT) ? S.lastTDT : null;
   if (lastTDTResult) {
     L.push('\n═══ ANÁLISE TÉCNICA — TDT ═══');
-    L.push('Tendência curto prazo (MM20): ' + lastTDTResult.shortTrend.toUpperCase());
-    L.push('Tendência médio prazo (MM50): ' + lastTDTResult.midTrend.toUpperCase());
-    L.push('Tendência longo prazo (MM200): ' + lastTDTResult.longTrend.toUpperCase());
-    L.push('Estrutura de swings (Dow Theory): ' + lastTDTResult.swingTrend.toUpperCase());
+    L.push('Tendência curto prazo (MM20): ' + String(lastTDTResult.shortTrend || '').toUpperCase());
+    L.push('Tendência médio prazo (MM50): ' + String(lastTDTResult.midTrend || '').toUpperCase());
+    L.push('Tendência longo prazo (MM200): ' + String(lastTDTResult.longTrend || '').toUpperCase());
+    L.push('Estrutura de swings (Dow Theory): ' + String(lastTDTResult.swingTrend || '').toUpperCase());
     L.push('Veredicto TDT: ' + lastTDTResult.verdict);
     L.push('Alinhamento de tendência: ' + lastTDTResult.alignLabel);
     if (lastTDTResult.adxVal) L.push('ADX (força tendência): ' + lastTDTResult.adxVal.toFixed(1) + ' — ' + lastTDTResult.adxLabel);
@@ -1433,8 +1492,11 @@ function buildCtx(ticker, q, p) {
     if (lastTDTResult.mm200) L.push('MM200: R$' + lastTDTResult.mm200.toFixed(2));
   }
 
-  if (lastHistData.length > 1) {
-    const prices = lastHistData.map(d => d.close || 0);
+  // Technical indicators based on historical data
+  // Use the state's last history array instead of an undefined global variable.
+  const lastHistData = (typeof S !== 'undefined' && Array.isArray(S.lastHist)) ? S.lastHist : [];
+  if (lastHistData && lastHistData.length > 1) {
+    const prices = lastHistData.map(d => d.close || d.adjustedClose || 0);
     const rsiVals = rsi(prices, 14).filter(v => v !== null);
     if (rsiVals.length) L.push('RSI(14) Wilder: ' + rsiVals[rsiVals.length-1].toFixed(1));
     // Volume trend
@@ -1736,6 +1798,42 @@ function calcPos(e) {
   return { totalQty, totalCost, avgPrice, curPrice, curValue, result, resultPct, hojeR, dyIncome };
 }
 
+/*
+ * Compute the risk/reward ratio for a trade. The ratio is defined as the
+ * potential reward divided by the potential risk. For long (BUY) trades,
+ * risk is the difference between the entry price and the stop price and
+ * reward is the difference between the target price and the entry. For
+ * short (SELL) trades, risk is stop minus entry and reward is entry minus
+ * target. If any of the required inputs are missing, invalid or would
+ * result in non‑positive risk/reward values, the function returns null.
+ *
+ * @param {number|null} entry  The entry price of the trade
+ * @param {number|null} stop   The stop loss price
+ * @param {number|null} target The take profit price
+ * @param {string} verdict     The trade direction (BUY for long, SELL for short)
+ * @returns {number|null}      The risk/reward ratio (e.g. 2 means 2:1) or null
+ */
+function computeRiskReward(entry, stop, target, verdict) {
+  // Ensure all inputs are valid numbers
+  const ent   = typeof entry === 'number' && !isNaN(entry) ? entry : null;
+  const stp   = typeof stop === 'number'  && !isNaN(stop)  ? stop  : null;
+  const tgt   = typeof target === 'number'&& !isNaN(target)? target: null;
+  if (ent == null || stp == null || tgt == null) return null;
+  // Define risk and reward based on direction
+  let risk, reward;
+  if (verdict && verdict.toUpperCase() === 'SELL') {
+    risk   = stp - ent;
+    reward = ent - tgt;
+  } else {
+    // Default to BUY/long
+    risk   = ent - stp;
+    reward = tgt - ent;
+  }
+  // Risk and reward must be positive to produce a meaningful ratio
+  if (risk <= 0 || reward <= 0) return null;
+  return reward / risk;
+}
+
 function calcLevels(price, tgt, stp) {
   return { entry: +(price*(1-3/100)).toFixed(4), target: +(price*(1+tgt/100)).toFixed(4), stop: +(price*(1-stp/100)).toFixed(4), rr: +(tgt/stp).toFixed(2) };
 }
@@ -1984,11 +2082,6 @@ let cfg = { token:BRAPI_TOKEN, anthro:'', capital:0, riskOp:2, riskTotal:10, wor
 })();
 const S = {
   cart:{}, alerts:[], journal:[], invHist:[], recHist:[],
-  // Holds the latest generated recommended portfolio. Each entry describes
-  // a suggested position (prazo, ticker, qty, entry, stop, target) and is
-  // rendered in the "Carteira Recomendada" table. Empty when no portfolio
-  // has been generated.
-  recPort:[],
   // Array to keep track of errors (losses) from past recommendations. Each entry
   // contains details such as ticker, verdict, entry price, stop/target, end
   // price, loss percentage and inferred reason. This enables the system to
@@ -2003,6 +2096,15 @@ const S = {
   tdtVisible:true, lastTDT:null, lastHist:[],
   inds:{mm20:false,mm50:false,mm200:false,bb:false,vol:false},
   scanning:false
+  ,
+  // Holds the recommended portfolio for the most recent recommendation. When a
+  // recommendation is generated the system calculates suggested quantities,
+  // maximum entry value, stop loss and target values for three timeframes
+  // (diária, semanal e mensal) based on the configured capital and risk per
+  // operation. This object has the shape {diaria: {...}, semanal: {...},
+  // mensal: {...}, ticker, verdict, price, stop, target}. It is cleared
+  // whenever a crypto or day trade recommendation is produced.
+  recPort:null
 };
 
 /* ═══ CLOCK ═══════════════════════════════════ */
@@ -3029,8 +3131,8 @@ async function gerarRec(){
       const raw=await gerarRecCripto(key,capital);renderCriptoRec(raw);
       // Cripto recommendations don't provide stop/target values
       addRecToHist('CRIPTO','HOLD',70,'cripto',S.perf,0,null,null);
-      // Clear recommended portfolio when generating cripto recommendations
-      S.recPort = [];
+      // Clear recommended portfolio for crypto recommendations
+      S.recPort = null;
       renderRecPort();
     }else if(S.recType==='daytrade'){
       const text=await gerarRecDayTrade(key,capital);
@@ -3038,8 +3140,8 @@ async function gerarRec(){
       document.getElementById('rec-wrap').innerHTML='<div class="ai-content fu">'+md2h(jm?text.replace(jm[0],'').trim():text)+'</div>';
       // Daytrade recommendations don't provide stop/target values
       addRecToHist('DT-'+new Date().toLocaleDateString('pt-BR'),'HOLD',65,'daytrade',S.perf,0,null,null);
-      // Clear recommended portfolio for day trade
-      S.recPort = [];
+      // Clear recommended portfolio for day trade recommendations
+      S.recPort = null;
       renderRecPort();
     }else{
       const prazo=S.recType==='semanal'?'semanal (1 semana)':document.getElementById('rec-prazo').value;
@@ -3087,24 +3189,29 @@ async function gerarRec(){
           recPrice=pData && pData.regularMarketPrice!=null?pData.regularMarketPrice:0;
         }catch(_){ recPrice=0; }
       }
+      // Store the recommendation in history
       addRecToHist(tk, verdict, conf, S.recType, S.perf, recPrice, stopVal, targetVal);
-      // Generate a recommended portfolio based on the returned entry, stop and target values.
-      // Only do this for non-cripto/daytrade recommendations. Use the user-input capital
-      // or fallback to the configured capital and risk per operation. If any required
-      // field is missing, clear the recommended portfolio. Always render the result.
-      if(S.recType!=='cripto' && S.recType!=='daytrade'){
-        var capEl=document.getElementById('rec-capital');
-        var capitalVal = 0;
-        if(capEl && capEl.value){ capitalVal = parseFloat(capEl.value) || 0; }
-        if(!capitalVal && typeof cfg.capital === 'number') capitalVal = cfg.capital || 0;
-        var riskPerc = (typeof cfg.riskOp === 'number' && !isNaN(cfg.riskOp)) ? cfg.riskOp : 2;
-        if(tk && tk!=='CARTEIRA' && tk!=='CRIPTO' && !tk.startsWith('DT-') && recPrice>0 && stopVal!=null && targetVal!=null){
-          S.recPort = computeRecPortfolio(tk, recPrice, stopVal, targetVal, verdict, capitalVal, riskPerc);
-        } else {
-          S.recPort = [];
-        }
-        renderRecPort();
+      // Compute recommended portfolio only when price, stop and target are available. Use
+      // one third of the maximum per‑trade risk for each horizon (Diária, Semanal e Mensal).
+      if(recPrice && stopVal != null && targetVal != null && !isNaN(recPrice) && !isNaN(stopVal) && !isNaN(targetVal)){
+        const maxRisk = cfg.capital * cfg.riskOp / 100;
+        const riskPerType = maxRisk / 3;
+        S.recPort = {
+          diaria: computeRecPortfolio(recPrice, stopVal, targetVal, verdict, riskPerType),
+          semanal: computeRecPortfolio(recPrice, stopVal, targetVal, verdict, riskPerType),
+          mensal: computeRecPortfolio(recPrice, stopVal, targetVal, verdict, riskPerType),
+          ticker: tk,
+          verdict: verdict,
+          price: recPrice,
+          stop: stopVal,
+          target: targetVal
+        };
+      } else {
+        // Clear recommended portfolio when insufficient data
+        S.recPort = null;
       }
+      // Render the recommended portfolio section (will clear if null)
+      renderRecPort();
     }
     updateAccuracy();
   }catch(e){document.getElementById('rec-wrap').innerHTML='<div style="color:var(--red);font-size:.77rem;padding:14px">Erro: '+e.message+'</div>';}
@@ -3117,9 +3224,7 @@ function addRecToHist(ticker, verdict, confidence, type, perfil, price, stop, ta
   // the time of the recommendation. Stop and target represent the analyst's
   // suggested stop-loss and target values (if provided). These fields are
   // optional and may be null if not supplied.
-  // Compute risk/reward ratio based on entry, stop and target. This helps
-  // assess whether the potential gain justifies the risk. Returns null if
-  // inputs are invalid or non-positive.
+  // Compute risk/reward ratio when entry, stop and target are all present.
   const rr = computeRiskReward(price, stop, target, verdict);
   const rec = {
     id: Date.now().toString(),
@@ -3133,8 +3238,8 @@ function addRecToHist(ticker, verdict, confidence, type, perfil, price, stop, ta
     target: typeof target === 'number' && !isNaN(target) ? target : null,
     date: new Date().toLocaleDateString('pt-BR'),
     outcome: 'open',
-    resultPct: null,
-    rr: rr
+    resultPct: null
+    , rr: rr
   };
   S.recHist.unshift(rec);
   // Trim history to a reasonable length if needed
@@ -3149,25 +3254,28 @@ function renderRecHist(){
   const el=document.getElementById('rec-hist-list');if(!el)return;
   if(!S.recHist.length){el.innerHTML='<div style="text-align:center;padding:18px;color:var(--t3);font-size:.75rem">Nenhuma recomendação registrada.</div>';return;}
   const vc={BUY:'rh-buy',HOLD:'rh-hold',SELL:'rh-sell'},vl={BUY:'COMPRAR',HOLD:'AGUARDAR',SELL:'VENDER'};
-  // Build each row with risk/reward ratio coloured appropriately. A null ratio
-  // displays a dash with neutral colour. Green ≥2, yellow between 1 and 2, red <1.
-  el.innerHTML = S.recHist.slice(0,30).map(function(r){
-    var rrVal  = (typeof r.rr === 'number' && !isNaN(r.rr)) ? r.rr : null;
-    var rrLbl  = rrVal != null ? rrVal.toFixed(2) + 'x' : '—';
-    var rrCol;
-    if(rrVal != null){ rrCol = rrVal >= 2 ? 'var(--green)' : (rrVal >= 1 ? 'var(--yellow)' : 'var(--red)'); }
-    else { rrCol = 'var(--t3)'; }
-    var outHtml;
-    if(r.outcome === 'win') outHtml = '<span class="rh-win">✓ Acertou</span>';
-    else if(r.outcome === 'loss') outHtml = '<span class="rh-loss">✗ Errou</span>';
-    else outHtml = '<span class="rh-open">Aberta</span>';
-    var actionHtml;
-    if(r.outcome === 'open'){
-      actionHtml = '<div style="display:flex;gap:3px;margin-left:auto"><button onclick="markRec(\''+r.id+'\',\'win\')" style="padding:2px 5px;font-size:.58rem;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:var(--green);border-radius:3px;cursor:pointer">✓</button><button onclick="markRecLoss(\''+r.id+'\')" style="padding:2px 5px;font-size:.58rem;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:var(--red);border-radius:3px;cursor:pointer">✗</button></div>';
-    } else {
-      actionHtml = '<button onclick="removeRec(\''+r.id+'\')" style="margin-left:auto;background:none;border:none;color:var(--t4);cursor:pointer">✕</button>';
+  el.innerHTML = S.recHist.slice(0, 30).map(r => {
+    const vClass = vc[r.verdict] || 'rh-hold';
+    const vLabel = vl[r.verdict] || r.verdict;
+    let rrStr = '';
+    if (r.rr && !isNaN(r.rr)) {
+      const rrCol = r.rr >= 2 ? 'var(--green)' : r.rr >= 1 ? 'var(--yellow)' : 'var(--red)';
+      rrStr = '<span style="color:' + rrCol + '">R/R ' + r.rr.toFixed(2) + '</span>';
     }
-    return '<div class="rec-hist-row"><span class="rh-v '+(vc[r.verdict]||'rh-hold')+'">'+(vl[r.verdict]||r.verdict)+'</span><strong>'+r.ticker+'</strong><span style="color:var(--t3)">'+r.date+'</span><span style="color:var(--t3)">'+r.type+'</span><span style="color:var(--t3)">'+r.confidence+'%</span><span style="color:'+rrCol+';font-family:var(--mono)">'+rrLbl+'</span>'+outHtml+actionHtml+'</div>';
+    const status = r.outcome === 'win' ? '<span class="rh-win">✓ Acertou</span>' : r.outcome === 'loss' ? '<span class="rh-loss">✗ Errou</span>' : '<span class="rh-open">Aberta</span>';
+    const actions = r.outcome === 'open'
+      ? '<div style="display:flex;gap:3px;margin-left:auto"><button onclick="markRec(\'' + r.id + '\',\'win\')" style="padding:2px 5px;font-size:.58rem;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:var(--green);border-radius:3px;cursor:pointer">✓</button><button onclick="markRecLoss(\'' + r.id + '\')" style="padding:2px 5px;font-size:.58rem;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:var(--red);border-radius:3px;cursor:pointer">✗</button></div>'
+      : '<button onclick="removeRec(\'' + r.id + '\')" style="margin-left:auto;background:none;border:none;color:var(--t4);cursor:pointer">✕</button>';
+    return '<div class="rec-hist-row">'
+      + '<span class="rh-v ' + vClass + '">' + vLabel + '</span>'
+      + '<strong>' + r.ticker + '</strong>'
+      + '<span style="color:var(--t3)">' + r.date + '</span>'
+      + '<span style="color:var(--t3)">' + r.type + '</span>'
+      + '<span style="color:var(--t3)">' + r.confidence + '%</span>'
+      + rrStr
+      + status
+      + actions
+      + '</div>';
   }).join('');
 }
 function parseDate(str){if(!str)return null;const p=str.split('/');return p.length===3?new Date(+p[2],+p[1]-1,+p[0]):new Date(str);}
@@ -3365,6 +3473,120 @@ function recordError(rec, endPrice){
 }
 
 /*
+ * Compute the recommended portfolio for a given trade. Given an entry price,
+ * stop‑loss and target levels, a verdict direction (BUY/HOLD/SELL) and a
+ * fixed risk amount in currency, this function calculates how many shares
+ * should be traded to keep the maximum loss within the risk budget. It
+ * returns an object containing the quantity (`qty`), the total amount to
+ * allocate at the entry price (`entryMax`), the total amount that would be
+ * lost at the stop level (`stopTotal`), the total amount gained at the
+ * target level (`targetTotal`) and the risk/reward ratio (`rr`). If any
+ * value cannot be computed or the risk per share is non‑positive the
+ * returned quantities are zero. Risk amount should already reflect the
+ * fraction of capital allocated to this timeframe (e.g. one third of the
+ * maximum risk per operation).
+ */
+function computeRecPortfolio(price, stop, target, verdict, riskAmount){
+  // Ensure inputs are numeric
+  const ent = (typeof price === 'number' && !isNaN(price)) ? price : null;
+  const stp = (typeof stop === 'number' && !isNaN(stop)) ? stop : null;
+  const tgt = (typeof target === 'number' && !isNaN(target)) ? target : null;
+  const dir = (verdict || '').toUpperCase();
+  const risk = (typeof riskAmount === 'number' && riskAmount > 0) ? riskAmount : null;
+  // Default return with zeros and R/R if possible
+  const base = { qty: 0, entryMax: 0, stopTotal: 0, targetTotal: 0, rr: computeRiskReward(ent, stp, tgt, dir) };
+  if(!ent || !stp || !tgt || !risk) return base;
+  // Compute risk per share: for BUY/HOLD risk is entry minus stop; for SELL risk is stop minus entry
+  let riskPerShare;
+  if(dir === 'SELL'){
+    riskPerShare = stp - ent;
+  } else {
+    // BUY or HOLD
+    riskPerShare = ent - stp;
+  }
+  if(!riskPerShare || riskPerShare <= 0) return base;
+  const qty = Math.floor(Math.abs(risk / riskPerShare));
+  if(!qty || qty <= 0 || !isFinite(qty)) return base;
+  return {
+    qty: qty,
+    entryMax: qty * ent,
+    stopTotal: qty * stp,
+    targetTotal: qty * tgt,
+    rr: computeRiskReward(ent, stp, tgt, dir)
+  };
+}
+
+/*
+ * Render the recommended portfolio section. This function reads the
+ * `S.recPort` object and builds an HTML table listing the Diária,
+ * Semanal and Mensal positions with their respective quantities,
+ * maximum entry, stop and target totals and risk/reward ratios. If no
+ * recommendation has been computed (e.g. after generating a crypto or
+ * day‑trade recommendation) the section is cleared. The function
+ * gracefully handles missing properties. Values are formatted in
+ * Brazilian Real with two decimal places.
+ */
+function renderRecPort(){
+  const wrap = document.getElementById('rec-portfolio');
+  if(!wrap) return;
+  const rp = S.recPort;
+  if(!rp || !rp.diaria){ wrap.innerHTML = ''; return; }
+  let html = '';
+  html += '<div class="ptitle" style="margin-bottom:6px">Carteira Recomendada</div>';
+  const types = ['diaria','semanal','mensal'];
+  const labels = { diaria:'Diária', semanal:'Semanal', mensal:'Mensal' };
+  // Use cards similar to the position rows to present each horizon. We reuse
+  // the pc() helper to generate labelled value blocks.
+  types.forEach(t => {
+    const item = rp[t];
+    if(!item) return;
+    // Entry, stop and target are stored at top level of rp
+    const ent = (typeof rp.price === 'number' && !isNaN(rp.price)) ? rp.price : null;
+    const stp = (typeof rp.stop === 'number' && !isNaN(rp.stop)) ? rp.stop : null;
+    const tgt = (typeof rp.target === 'number' && !isNaN(rp.target)) ? rp.target : null;
+    const rr = (item.rr != null && !isNaN(item.rr)) ? item.rr.toFixed(2) : '-';
+    html += '<div class="rec-card">'
+      + '<div class="pos-row-hdr"><div><div class="pos-tk">' + (rp.ticker || '—') + '</div><div class="pos-name">' + (labels[t] || t) + '</div></div></div>'
+      + '<div class="pos-stats">'
+      + pc('Qtd', (item.qty != null ? item.qty.toLocaleString('pt-BR') : '—'))
+      + pc('Entrada', ent != null ? 'R$' + ent.toFixed(2) : '—')
+      + pc('Stop', stp != null ? 'R$' + stp.toFixed(2) : '—')
+      + pc('Alvo', tgt != null ? 'R$' + tgt.toFixed(2) : '—')
+      + pc('Entr Max.', (item.entryMax != null ? 'R$' + item.entryMax.toFixed(2) : '—'))
+      + pc('Stop Tot.', (item.stopTotal != null ? 'R$' + item.stopTotal.toFixed(2) : '—'))
+      + pc('R/R', rr)
+      + '</div>'
+      + '</div>';
+  });
+  wrap.innerHTML = html;
+  // Ensure the panel is visible after rendering
+  wrap.style.display = 'block';
+}
+
+/*
+ * Toggle visibility of the recommended portfolio panel. If no recommended
+ * portfolio is available (i.e. S.recPort is null or has no entries) the
+ * user is alerted to generate a recommendation first. Otherwise the
+ * function flips the display style between none and block. This is bound
+ * to the “📋 Carteira Recomendada” button in the Recomendação tab.
+ */
+function toggleRecPort(){
+  const el = document.getElementById('rec-portfolio');
+  if(!el) return;
+  // Require that a recommendation has been computed; otherwise there is
+  // nothing to display.
+  if(!S.recPort || !S.recPort.diaria){
+    alert('Nenhuma carteira recomendada disponível. Gere uma recomendação primeiro.');
+    return;
+  }
+  if(el.style.display === 'none' || el.style.display === ''){
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+/*
  * Build a human‑readable summary of recent errors to include in prompts.
  * Returns a string containing a header and bullet points for up to the last
  * 3 errors (most recent first). Each line mentions the ticker, verdict,
@@ -3384,79 +3606,6 @@ function getErrorSummary(){
   return `\nAPRENDIZADOS RECENTES:\n${lines.join('\n')}`;
 }
 
-/* ═══ RISK/REWARD & RECOMMENDED PORTFOLIO FUNCTIONS ═════════════════════════ */
-// Compute the risk/reward ratio given an entry price, stop-loss and target.
-// For BUY/HOLD: risk = entry - stop; reward = target - entry.
-// For SELL: risk = stop - entry; reward = entry - target.
-// Returns null if inputs are missing or non-positive. The result is rounded to two decimals.
-function computeRiskReward(entry, stop, target, verdict){
-  var ent = typeof entry === 'number' && !isNaN(entry) ? entry : null;
-  var st  = typeof stop  === 'number' && !isNaN(stop)  ? stop  : null;
-  var tgt = typeof target=== 'number' && !isNaN(target)? target: null;
-  if(ent == null || st == null || tgt == null) return null;
-  var v = String(verdict || '').toUpperCase();
-  var risk, reward;
-  if(v === 'SELL'){
-    risk   = st - ent;
-    reward = ent - tgt;
-  } else {
-    risk   = ent - st;
-    reward = tgt - ent;
-  }
-  if(risk <= 0 || reward <= 0) return null;
-  return +(reward / risk).toFixed(2);
-}
-
-// Build a recommended portfolio for a single ticker using the user's capital and risk percentage.
-// It returns an array of three objects (diária, semanal, mensal) with ticker, qty, entry,
-// stop, target and R/R. If inputs are invalid, returns an empty array.
-function computeRecPortfolio(ticker, entry, stop, target, verdict, capital, riskPerc){
-  var ent = typeof entry  === 'number' && !isNaN(entry)  ? entry  : null;
-  var stp = typeof stop   === 'number' && !isNaN(stop)   ? stop   : null;
-  var tgt = typeof target === 'number' && !isNaN(target) ? target : null;
-  var cap = typeof capital=== 'number' && !isNaN(capital) && capital > 0 ? capital : null;
-  var rp  = typeof riskPerc=== 'number' && !isNaN(riskPerc) && riskPerc > 0 ? riskPerc : null;
-  if(ent==null || stp==null || tgt==null || cap==null || rp==null) return [];
-  var riskAmt = cap * (rp / 100);
-  var v = String(verdict || '').toUpperCase();
-  var riskPerShare = v === 'SELL' ? (stp - ent) : (ent - stp);
-  riskPerShare = Math.abs(riskPerShare);
-  if(riskPerShare <= 0) return [];
-  var qty = Math.floor(riskAmt / riskPerShare);
-  if(!qty || qty <= 0) return [];
-  var rrVal = computeRiskReward(ent, stp, tgt, verdict);
-  var arr = [];
-  ['diaria','semanal','mensal'].forEach(function(tf){
-    arr.push({ prazo: tf, ticker: ticker, qty: qty, entry: ent, stop: stp, target: tgt, rr: rrVal });
-  });
-  return arr;
-}
-
-// Render the recommended portfolio stored in S.recPort into the #rec-portfolio container.
-// Displays timeframe, ticker, quantity, entry, stop, target and R/R. When no data, clears container.
-function renderRecPort(){
-  var wrap = document.getElementById('rec-portfolio');
-  if(!wrap) return;
-  var data = Array.isArray(S.recPort) ? S.recPort : [];
-  if(!data.length){ wrap.innerHTML = ''; return; }
-  var html = '<div class="ptitle">Carteira Recomendada</div>';
-  html += '<table class="rec-port-table"><thead><tr><th>Prazo</th><th>Ticker</th><th>Qtd</th><th>Entrada Máx</th><th>Stop Loss</th><th>Ganho Alvo</th><th>R/R</th></tr></thead><tbody>';
-  data.forEach(function(it){
-    var rrLbl = (typeof it.rr === 'number' && !isNaN(it.rr)) ? it.rr.toFixed(2) + 'x' : '—';
-    var prazo = it.prazo === 'diaria' ? 'Diária' : (it.prazo === 'semanal' ? 'Semanal' : 'Mensal');
-    html += '<tr>' +
-            '<td>' + prazo + '</td>' +
-            '<td><strong>' + it.ticker + '</strong></td>' +
-            '<td>' + it.qty + '</td>' +
-            '<td>' + (it.entry != null && !isNaN(it.entry) ? 'R$ ' + Number(it.entry).toFixed(2) : '—') + '</td>' +
-            '<td>' + (it.stop  != null && !isNaN(it.stop )   ? 'R$ ' + Number(it.stop ).toFixed(2)   : '—') + '</td>' +
-            '<td>' + (it.target!= null && !isNaN(it.target) ? 'R$ ' + Number(it.target).toFixed(2) : '—') + '</td>' +
-            '<td>' + rrLbl + '</td>' +
-            '</tr>';
-  });
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
-}
 /* ═══ SCANNER ═════════════════════════════════ */
 async function runScanner(){
   if(S.scanning)return;
@@ -3783,27 +3932,38 @@ function loadData(){
   try{const a=localStorage.getItem('alerts_v1');if(a)S.alerts=JSON.parse(a);}catch(e){}
   try{const j=localStorage.getItem('journal_v1');if(j)S.journal=JSON.parse(j);}catch(e){}
   try{const h=localStorage.getItem('invest_history_v1');if(h)S.invHist=JSON.parse(h);}catch(e){}
-  try{const r=localStorage.getItem('rec_history_v1');if(r)S.recHist=JSON.parse(r);}catch(e){}
+  try{
+    const r=localStorage.getItem('rec_history_v1');
+    if(r) {
+      S.recHist = JSON.parse(r);
+      // Ensure all loaded recommendations have a computed risk/reward ratio.  Older
+      // histories may not have the `rr` property set.  When entry (price), stop
+      // and target are defined and valid numbers, compute the ratio using the
+      // same logic as when recommendations are first added.  This runs on
+      // page load and silently updates the stored history.
+      let updated = false;
+      S.recHist.forEach(rec => {
+        // Only compute if rr is missing or not a number and we have price, stop and target.
+        if ((rec.rr == null || isNaN(rec.rr)) && rec && typeof rec.price === 'number' && !isNaN(rec.price)
+            && typeof rec.stop === 'number'  && !isNaN(rec.stop)
+            && typeof rec.target === 'number'&& !isNaN(rec.target)) {
+          const val = computeRiskReward(rec.price, rec.stop, rec.target, rec.verdict);
+          if (val != null) {
+            rec.rr = val;
+            updated = true;
+          }
+        }
+      });
+      if (updated) {
+        // Persist any backfilled ratios back to localStorage.  This ensures
+        // subsequent loads do not repeat the calculation and that the UI
+        // reflects the computed values immediately.
+        localStorage.setItem('rec_history_v1', JSON.stringify(S.recHist));
+      }
+    }
+  }catch(e){}
   // Load error log (recent recommendation mistakes)
   try{const er=localStorage.getItem('error_log_v1');if(er)S.errors=JSON.parse(er);}catch(e){}
-  // Backfill missing risk/reward ratios in the loaded history. If an entry has
-  // price, stop and target but no computed rr, compute it now and persist.
-  if(Array.isArray(S.recHist)){
-    var updatedRR = false;
-    S.recHist.forEach(function(rec){
-      if(rec && (rec.rr == null || isNaN(rec.rr))){
-        var pr = typeof rec.price  === 'number' && !isNaN(rec.price)  ? rec.price  : null;
-        var st = typeof rec.stop   === 'number' && !isNaN(rec.stop)   ? rec.stop   : null;
-        var tg = typeof rec.target === 'number' && !isNaN(rec.target) ? rec.target : null;
-        var vd = rec.verdict || '';
-        if(pr != null && st != null && tg != null){
-          var rrNew = computeRiskReward(pr, st, tg, vd);
-          if(rrNew != null){ rec.rr = rrNew; updatedRR = true; }
-        }
-      }
-    });
-    if(updatedRR){ try{ localStorage.setItem('rec_history_v1', JSON.stringify(S.recHist)); }catch(e){} }
-  }
   updateBadge();updateAlertBadge();
 }
 
@@ -4599,10 +4759,11 @@ setInterval(function() {
           <button class="btn btn-purple" id="btn-gerar-rec" onclick="gerarRec()" style="padding:9px 18px">✨ Gerar Recomendação</button>
           <button class="btn btn-ghost" id="btn-show-hist" onclick="toggleRecHist()" style="padding:9px 14px">📜 Histórico</button>
           <button class="pdf-btn" id="btn-rec-pdf" onclick="exportRecPDF()">📄 PDF</button>
+          <button class="btn btn-ghost" id="btn-rec-port" onclick="toggleRecPort()" style="padding:9px 14px">📋 Carteira Recomendada</button>
         </div>
         <div id="rec-wrap" style="margin-top:14px"></div>
-        <!-- Recommended portfolio table will be injected here after generating a recommendation. -->
-        <div id="rec-portfolio" style="margin-top:14px"></div>
+        <!-- Recommended portfolio will be rendered here after generating a recommendation. -->
+        <div id="rec-portfolio" style="margin-top:14px; display:none"></div>
         <div id="rec-hist-panel" style="display:none;margin-top:14px">
           <div class="ptitle" style="margin-bottom:9px">Histórico de Recomendações</div>
           <div id="rec-hist-list"></div>
