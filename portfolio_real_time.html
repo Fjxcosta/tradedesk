@@ -1584,7 +1584,12 @@ async function callClaude(key, system, user) {
     // Use CORS mode explicitly to satisfy browsers enforcing preflight checks.
     mode: 'cors',
     body: JSON.stringify({
-      model: 'claude-3-5-sonnet-20241022',
+      // Use Claude Sonnet 4.6. Anthropic's documentation notes that developers
+      // should specify the model ID `claude-sonnet-4-6` when calling the
+      // Claude API【346889558958632†L64-L77】. If your API key lacks access to
+      // Sonnet 4.6 you may need to adjust this value to another supported
+      // model, such as `claude-3-sonnet-20240229`.
+      model: 'claude-sonnet-4-6',
       max_tokens: 4000,
       system,
       messages: [{ role: 'user', content: user }]
