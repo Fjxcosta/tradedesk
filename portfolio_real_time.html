@@ -3464,8 +3464,8 @@ function loadConfig(){
     var capEl=document.getElementById('cfg-capital');
     var ropEl=document.getElementById('cfg-risk-op');
     var rtEl =document.getElementById('cfg-risk-total');
-    // Fill token — show actual value (masked by type=password)
-    if(tokEl) tokEl.value = (cfg.token && cfg.token!==BRAPI_TOKEN) ? cfg.token : '';
+    // Fill token — always show the saved token (masked by type=password)
+    if(tokEl) tokEl.value = cfg.token || '';
     if(antEl) antEl.value = cfg.anthro || '';
     var wrkEl2=document.getElementById('cfg-worker');
     if(wrkEl2) wrkEl2.value = cfg.workerUrl || '';
@@ -3473,7 +3473,7 @@ function loadConfig(){
     if(ropEl) ropEl.value = cfg.riskOp;
     if(rtEl)  rtEl.value  = cfg.riskTotal;
     // Show "saved" indicators if values exist
-    if(cfg.token && cfg.token!==BRAPI_TOKEN){
+    if(cfg.token){
       var ts=document.getElementById('cfg-token-saved');
       if(ts){ ts.textContent='✓ Token salvo'; ts.style.display='inline'; }
     }
