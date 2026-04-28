@@ -1732,15 +1732,29 @@ Liste 3-5 categorias ou ativos que parecem atrativos mas não têm fundamento:
 - ETFs cripto na B3: BITH11 (BTC), ETHE11 (ETH), CRPT11 (índice)
 - Declaração Imposto de Renda: obrigatória acima de R$5.000 em carteira
 
-{"type":"cripto_summary","cycle":"bull_early|bull_mid|bear|accumulation","btc_dominance":"XX%","recommendation":"ACUMULAR|AGUARDAR|REDUZIR","overall_confidence":72}`;
+`;
 
   return await callClaude(key, sys, usr);
 }
 
 function renderCriptoRec(raw) {
-  // Extract cycle summary JSON
+  // Extract cycle summary JSON from the response string. The assistant will return
+  // a one‑line JSON object like {"type":"cripto_summary", ...}. We find and
+  // parse it safely. This prevents syntax errors from an unterminated regex.
   let cycleSummary = null;
-  const csm = raw.match(/\{"type":"cripto_summary"[^}]*\}
+  const csm = raw.match(/\{"type":"cripto_summary"[^}]*\}/);
+  if (csm) {
+    try {
+      cycleSummary = JSON.parse(csm[0]);
+    } catch (err) {
+      console.warn('Falha ao analisar resumo cripto', err);
+    }
+  }
+  // Expose the parsed summary on the global state for later use.
+  if (typeof S !== 'undefined') {
+    S.cryptoSummary = cycleSummary;
+  }
+}
 
 async function gerarRecDayTrade(key, capital) {
   const sys = `Você é um trader profissional especializado em day trade de ações brasileiras (B3). Horário de funcionamento: 10h-17h BRT. Analise o cenário intraday com base nos dados técnicos disponíveis. Seja MUITO específico: níveis de entrada, stop e alvos em centavos, não em percentuais vagos. Sempre defina stop loss obrigatório.`;
