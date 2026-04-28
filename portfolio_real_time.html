@@ -959,6 +959,19 @@ function goPage(id){
   if(id==='alertas'&&typeof renderAlerts==='function')renderAlerts();
   if(id==='history'&&typeof renderHistory==='function')renderHistory();
 }
+
+// Open the AI analysis page for a given ticker. When called from position rows, this
+// navigates to the analysis tab and triggers a new analysis for the selected
+// asset. Defining this helper ensures that row click handlers remain concise.
+function openAnalysis(ticker){
+  if(!ticker) return;
+  try {
+    goPage('analise');
+  } catch(_) {}
+  try {
+    triggerAnalysis(ticker);
+  } catch(_) {}
+}
 function openCarteira(){
   document.getElementById('cart-modal').classList.add('open');
   document.body.style.overflow='hidden';
@@ -1542,7 +1555,7 @@ Liste e quantifique os riscos:
 
 ## 🎯 Recomendação Operacional
 
-**Veredicto:** COMPRAR / AGUARDAR / EVITAR — seja direto e justifique em 2 frases.
+**Veredicto:** COMPRAR / MANTER / VENDER / AGUARDAR / EVITAR — seja direto e justifique em 2 frases.
 
 **Timing:** Agora / Aguardar confirmação técnica / Aguardar evento X
 
@@ -2295,17 +2308,24 @@ async function refreshCart(){
   document.getElementById('cart-upd').textContent='Atualizado: '+new Date().toLocaleTimeString('pt-BR');
   // Re-render with fresh prices
   renderPos();updateCartSumm();
+  // Persist latest cart state before evaluating open recommendations
   saveData();
+  try{
+    await autoUpdateRecommendations();
+  } catch(_){}
+  // After auto evaluation, update accuracy metrics and re-render history
+  updateAccuracy();
+  if(typeof renderRecHist === 'function') renderRecHist();
 }
 function renderPos(){
   const wrap=document.getElementById('pos-list'),tickers=Object.keys(S.cart);
   if(!tickers.length){wrap.innerHTML='<div style="text-align:center;padding:36px;color:var(--t3);font-size:.75rem">Nenhuma posição. Adicione acima.</div>';return;}
   wrap.innerHTML=tickers.map(t=>{
     const e=S.cart[t],ps=calcPos(e),pos=ps.result!=null&&ps.result>=0,hpos=ps.hojeR!=null&&ps.hojeR>=0;
-    const ap=e.aportes.map((a,i)=>'<div class="arow"><span class="aqty">'+a.qty+'×</span><span class="aprice">R$'+a.price.toFixed(2)+'</span><span>'+a.date+'</span><span>=R$'+(a.qty*a.price).toFixed(2)+'</span><button class="adel" onclick="removeAporte(\''+t+'\','+i+')">✕</button></div>').join('');
-    return '<div class="pos-row fu">'+
+    const ap=e.aportes.map((a,i)=>'<div class="arow"><span class="aqty">'+a.qty+'×</span><span class="aprice">R$'+a.price.toFixed(2)+'</span><span>'+a.date+'</span><span>=R$'+(a.qty*a.price).toFixed(2)+'</span><button class="adel" onclick="event.stopPropagation(); removeAporte(\''+t+'\','+i+')">✕</button></div>').join('');
+    return '<div class="pos-row fu" onclick="openAnalysis(\''+t+'\')">'+
       '<div class="pos-row-hdr"><div><div class="pos-tk">'+t+'</div><div class="pos-name">'+(e.name||'')+(e.sector?' · '+e.sector:'')+'</div></div>'+
-      '<div class="pos-actions"><button class="btn btn-ghost btn-xs" onclick="addAporteTo(\''+t+'\')">+ Aporte</button><button class="btn btn-ghost btn-xs" onclick="editPos(\''+t+'\')">✏️</button><button class="btn btn-danger btn-xs" onclick="removePos(\''+t+'\')">✕</button></div></div>'+
+      '<div class="pos-actions"><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); addAporteTo(\''+t+'\')">+ Aporte</button><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); editPos(\''+t+'\')">✏️</button><button class="btn btn-danger btn-xs" onclick="event.stopPropagation(); removePos(\''+t+'\')">✕</button></div></div>'+
       '<div class="pos-stats">'+
         pc('Qtd',ps.totalQty.toLocaleString('pt-BR'))+pc('P.Médio','R$'+ps.avgPrice.toFixed(2))+
         pc('Custo',fR(ps.totalCost))+pc('Atual',ps.curPrice!=null?'R$'+ps.curPrice.toFixed(2):'—','cb')+
@@ -2458,8 +2478,11 @@ async function runCartAlerts(){
   const btn=document.getElementById('btn-run-cart-alerts');btn.disabled=true;btn.textContent='Analisando…';
   document.getElementById('cart-alerts-result').innerHTML='<div class="ai-spin-wrap"><div class="ai-spin"></div><div class="ai-step">Analisando carteira completa…</div></div>';
   const cCtx=tickers.map(t=>{const e=S.cart[t];const ps=calcPos(e);return t+': PM=R$'+ps.avgPrice.toFixed(2)+' | Atual=R$'+(ps.curPrice||0).toFixed(2)+' | Res='+(ps.result!=null?(ps.result>=0?'+':'')+ps.result.toFixed(2):'?')+(ps.resultPct!=null?' ('+ps.resultPct.toFixed(1)+'%)':'')+' | Qtd='+ps.totalQty+' | Setor='+(e.sector||'—');}).join('\n');
-  const sys='Você é um gestor de carteiras sênior especializado no Brasil. Analise cada ativo e emita: COMPRAR_MAIS, MANTER, AGUARDAR, VENDER_PARCIAL ou VENDER_TOTAL. Frequência: '+S.alertFreq+'.';
-  const usr='Carteira:\n'+cCtx+'\n\nMacro: Selic ~14,75%, câmbio, risco fiscal BR.\n\nPara cada ativo, retorne JSON numa linha:\n{"ticker":"X","action":"MANTER","icon":"⏸️","strength":"MODERADO","reason":"Justificativa","stop":"R$XX","target":"R$XX"}\n\nDepois uma visão geral em texto.';
+  // Ajuste: analisar cada ativo da carteira seguindo o mesmo padrão de análise utilizado nas recomendações individuais,
+  // incluindo seções de empresa, fundamentos, técnico, macro & setorial, riscos, tese, cenários e recomendação operacional.
+  const sys='Você é um gestor de carteiras sênior especializado no Brasil. Para cada ativo da carteira, faça uma análise completa seguindo o padrão buy-side institucional (Empresa & Posicionamento Competitivo, Análise Fundamentalista, Análise Técnica Integrada, Cenário Macro & Setorial, Análise de Riscos, Tese de Investimento & Catalisadores, Cenários de Preço e Recomendação Operacional) e ao final emita uma recomendação entre: COMPRAR_MAIS, MANTER, AGUARDAR, VENDER_PARCIAL ou VENDER_TOTAL. Frequência: '+S.alertFreq+'.';
+  // Contexto macro e político atualizado para abril/2026, a ser usado na análise de cada ativo.
+  const usr='Carteira:\n'+cCtx+'\n\nMACRO: Selic ~14,50%, IPCA ~4,14% (expectativas ~4,86%), USD/BRL ~5,15, risco fiscal (trajetória da dívida/PIB, medidas populistas pré-eleição), cenário político polarizado com eleições em 4/10/2026 (Lula x Flávio Bolsonaro), conflito no Oriente Médio elevando preços de energia.\n\nPara cada ativo, siga o padrão de análise descrito e, ao final, retorne JSON numa linha:\n{"ticker":"X","action":"MANTER","icon":"⏸️","strength":"MODERADO","reason":"Breve justificativa","stop":"R$XX","target":"R$XX"}\n\nDepois da lista de JSONs, inclua uma visão geral em texto sobre a carteira.';
   try{
     const raw=await callClaude(key,sys,usr);
     const lines=raw.split('\n'),alerts2=[],ov=[];
@@ -2881,7 +2904,15 @@ async function gerarRec(){
       let verdict='HOLD',conf=70,tk='CARTEIRA';
       if(jm){try{const j=JSON.parse(jm[0]);verdict=j.verdict;conf=j.confidence||70;tk=j.ticker||'CARTEIRA';}catch(e){}}
       document.getElementById('rec-wrap').innerHTML='<div class="ai-content fu">'+md2h(jm?text.replace(jm[0],'').trim():text)+'</div>';
-      addRecToHist(tk,verdict,conf,S.recType,S.perf,0);
+      // Capture current price for the recommended ticker to allow auto-outcome evaluation
+      let recPrice=0;
+      if(tk && tk!=='CARTEIRA' && tk!=='CRIPTO' && !tk.startsWith('DT-')){
+        try{
+          const pData=await brapiGet(tk);
+          recPrice=pData && pData.regularMarketPrice!=null?pData.regularMarketPrice:0;
+        }catch(_){recPrice=0;}
+      }
+      addRecToHist(tk,verdict,conf,S.recType,S.perf,recPrice);
     }
     updateAccuracy();
   }catch(e){document.getElementById('rec-wrap').innerHTML='<div style="color:var(--red);font-size:.77rem;padding:14px">Erro: '+e.message+'</div>';}
@@ -2912,6 +2943,58 @@ function updateAccuracy(){
   setA('acc-mensal','acc-bar-m',monthly.length?monthly.filter(r=>r.outcome==='win').length/monthly.length*100:null,'acc-mensal-sub',monthly.length+' no mês');
   setA('acc-semanal','acc-bar-s',weekly.length?weekly.filter(r=>r.outcome==='win').length/weekly.length*100:null,'acc-semanal-sub',weekly.length+' na semana');
   const re=document.getElementById('acc-result');if(re){re.textContent=closed.length?wins.length+'/'+closed.length:'—';re.style.color=closed.length?(wins.length/closed.length>=0.5?'var(--green)':'var(--red)'):'var(--t3)';}
+}
+
+/*
+ * Automatically update open recommendations by comparing the current market price
+ * against the price at which the recommendation was issued. This enables
+ * performance statistics to update without manual input. A simple 5% threshold
+ * is used: for BUY recommendations, a +5% move marks a win and −5% marks a
+ * loss; for SELL, the logic is inverted. HOLD recommendations use the same
+ * threshold in either direction. Result percentages are stored to show the
+ * magnitude of the move. Only real tickers (excluding generic labels like
+ * CARTEIRA, CRIPTO or DT-) are evaluated. This function is asynchronous and
+ * should be awaited when called.
+ */
+async function autoUpdateRecommendations(){
+  // Nothing to do if there is no history
+  if(!Array.isArray(S.recHist) || !S.recHist.length) return;
+  for(const r of S.recHist){
+    // Skip closed or ineligible recommendations
+    if(r.outcome !== 'open') continue;
+    const tk = r.ticker;
+    if(!tk || tk === 'CARTEIRA' || tk === 'CRIPTO' || tk.startsWith('DT-')) continue;
+    // Ensure we have a reference price to compare against
+    const refPrice = (typeof r.price === 'number' && !isNaN(r.price)) ? r.price : null;
+    if(!refPrice || refPrice <= 0) continue;
+    // Obtain current price — prefer cached price from cart for efficiency
+    let cur = null;
+    if(S.cart[tk] && S.cart[tk].currentPrice != null){
+      cur = S.cart[tk].currentPrice;
+    } else {
+      try{
+        const q = await brapiGet(tk);
+        cur = q && q.regularMarketPrice != null ? q.regularMarketPrice : null;
+      }catch(_){
+        continue;
+      }
+    }
+    if(cur == null || cur <= 0) continue;
+    const pct = (cur - refPrice) / refPrice * 100;
+    const th  = 5; // 5% threshold for win/loss
+    const vp  = (pct>=0?'+':'') + pct.toFixed(2);
+    if(r.verdict === 'BUY'){
+      if(pct >= th){ markRec(r.id,'win', pct); continue; }
+      if(pct <= -th){ markRec(r.id,'loss', pct); continue; }
+    } else if(r.verdict === 'SELL'){
+      if(pct <= -th){ markRec(r.id,'win', pct); continue; }
+      if(pct >= th){ markRec(r.id,'loss', pct); continue; }
+    } else {
+      // HOLD — treat any significant move as outcome
+      if(pct >= th){ markRec(r.id,'win', pct); continue; }
+      if(pct <= -th){ markRec(r.id,'loss', pct); continue; }
+    }
+  }
 }
 
 /* ═══ SCANNER ═════════════════════════════════ */
