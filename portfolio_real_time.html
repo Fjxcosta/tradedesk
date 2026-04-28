@@ -1917,6 +1917,14 @@ let cfg = { token:BRAPI_TOKEN, anthro:'', capital:0, riskOp:2, riskTotal:10, wor
         localStorage.setItem('cfg_v2', JSON.stringify(cfg));
       }
     }
+    // If no token is stored at all, persist the default BRAPI token so it can
+    // be restored and exported. Without this, the token may exist only in
+    // memory (cfg) and never be written to localStorage, causing it to be
+    // omitted from backups.
+    if(!cfg.token){
+      cfg.token = BRAPI_TOKEN;
+      try { localStorage.setItem('cfg_v2', JSON.stringify(cfg)); } catch(e) {}
+    }
   }catch(e){}
 })();
 const S = {
@@ -3023,9 +3031,11 @@ function saveConfig(){
   var rtEl =document.getElementById('cfg-risk-total');
   var tokVal = tokEl ? tokEl.value.trim() : '';
   var antVal = antEl ? antEl.value.trim() : '';
-  // Only update if user actually typed something
-  if(tokVal) cfg.token  = tokVal;
-  if(antVal) cfg.anthro = antVal;
+  // Always update token and anthro values; if the field is empty, clear it
+  // explicitly. This ensures that tokens are persisted or removed
+  // intentionally rather than falling back silently to the default.
+  cfg.token  = tokVal;
+  cfg.anthro = antVal;
   var wrkEl=document.getElementById('cfg-worker');
   if(wrkEl && wrkEl.value.trim()) cfg.workerUrl = wrkEl.value.trim();
   if(capEl && capEl.value!=='') cfg.capital  = parseFloat(capEl.value)||0;
@@ -3123,12 +3133,16 @@ function exportBackup() {
   var cfgCurrent = JSON.parse(localStorage.getItem('cfg_v2') || '{}');
   // Merge with in-memory cfg to capture any unsaved changes
   Object.assign(cfgCurrent, {
-    token:     cfg.token     || cfgCurrent.token,
-    anthro:    cfg.anthro    || cfgCurrent.anthro,
-    workerUrl: cfg.workerUrl || cfgCurrent.workerUrl,
-    capital:   cfg.capital   || cfgCurrent.capital,
-    riskOp:    cfg.riskOp    || cfgCurrent.riskOp,
-    riskTotal: cfg.riskTotal || cfgCurrent.riskTotal,
+    // Persist the exact in-memory values. Using direct assignment here
+    // avoids falling back to older localStorage values, ensuring the
+    // exported token and other settings reflect the most recent user
+    // inputs—even if they are empty strings.
+    token:     cfg.token,
+    anthro:    cfg.anthro,
+    workerUrl: cfg.workerUrl,
+    capital:   cfg.capital,
+    riskOp:    cfg.riskOp,
+    riskTotal: cfg.riskTotal,
   });
   var data = {
     version: 4,
