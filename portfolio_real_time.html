@@ -1149,6 +1149,73 @@ async function brapiGet(ticker, params = {}) {
 // loaded via file:// protocol.
 window.brapiGet = brapiGet;
 
+
+/* ═══ SUPORTE A OPÇÕES B3 ═════════════════════
+   Permite visualizar e controlar tickers de opções, mesmo quando a API
+   não retorna histórico/cotação para o contrato. Ex.: PETRA360, VALEA60. */
+function normalizeTickerInput(value){
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\.SA$/,'')
+    .replace(/\s+/g,'')
+    .replace(/[^A-Z0-9]/g,'');
+}
+function isB3OptionTicker(ticker){
+  const t = normalizeTickerInput(ticker);
+  return /^[A-Z]{4}[A-X][0-9]{1,5}[A-Z0-9]?$/.test(t);
+}
+function parseB3OptionTicker(ticker){
+  const t = normalizeTickerInput(ticker);
+  if(!isB3OptionTicker(t)) return null;
+  const code = t.charAt(4);
+  const monthMap = {
+    A:['CALL','Jan'],B:['CALL','Fev'],C:['CALL','Mar'],D:['CALL','Abr'],E:['CALL','Mai'],F:['CALL','Jun'],
+    G:['CALL','Jul'],H:['CALL','Ago'],I:['CALL','Set'],J:['CALL','Out'],K:['CALL','Nov'],L:['CALL','Dez'],
+    M:['PUT','Jan'],N:['PUT','Fev'],O:['PUT','Mar'],P:['PUT','Abr'],Q:['PUT','Mai'],R:['PUT','Jun'],
+    S:['PUT','Jul'],T:['PUT','Ago'],U:['PUT','Set'],V:['PUT','Out'],W:['PUT','Nov'],X:['PUT','Dez']
+  };
+  const info = monthMap[code] || ['OPÇÃO','—'];
+  return { ticker:t, underlying:t.slice(0,4), code, type:info[0], month:info[1], strikeCode:t.slice(5) };
+}
+function optionName(ticker){
+  const o = parseB3OptionTicker(ticker);
+  if(!o) return ticker;
+  return 'Opção B3 · '+o.underlying+' · '+o.type+' · '+o.month+' · strike cód. '+o.strikeCode;
+}
+function optionFallbackQuote(ticker){
+  const o = parseB3OptionTicker(ticker);
+  return {
+    ticker:normalizeTickerInput(ticker),
+    shortName: optionName(ticker),
+    longName: optionName(ticker),
+    exchange:'B3 OPÇÕES',
+    summaryProfile:{sector:'Derivativo / Opções'},
+    regularMarketPrice:null,
+    regularMarketChange:null,
+    regularMarketChangePercent:null,
+    regularMarketOpen:null,
+    regularMarketDayHigh:null,
+    regularMarketDayLow:null,
+    regularMarketVolume:null,
+    marketCap:null,
+    fiftyTwoWeekHigh:null,
+    fiftyTwoWeekLow:null,
+    isOption:true,
+    optionMeta:o
+  };
+}
+function ensureOptionMeta(item, ticker){
+  const t = normalizeTickerInput(ticker || item?.ticker);
+  if(!item || !isB3OptionTicker(t)) return item;
+  item.isOption = true;
+  item.optionMeta = item.optionMeta || parseB3OptionTicker(t);
+  item.name = item.name && item.name !== t ? item.name : optionName(t);
+  item.sector = item.sector || 'Derivativo / Opções';
+  return item;
+}
+
+
 function sma(data, period) {
   return data.map((_, i) => {
     if (i < period - 1) return null;
@@ -2170,7 +2237,23 @@ async function liveLoad(ticker){
     triggerAnalysis(ticker);
     checkAlertsForTicker(ticker,q.regularMarketPrice);
     if(S.cart[ticker]){const lv=calcLevels(q.regularMarketPrice,S.cart[ticker].targetPct||20,S.cart[ticker].stopPct||10);Object.assign(S.cart[ticker],enrichQ(ticker,q),lv);}
-  }catch(e){setLS('Erro: '+e.message);document.getElementById('tic-card').style.display='none';}
+  }catch(e){
+    if(isB3OptionTicker(ticker)){
+      const q=optionFallbackQuote(ticker);
+      fillCard(ticker,q); fillChartHdr(ticker,q);
+      S.lastHist=[];
+      const chartErr=document.getElementById('chartError');
+      const chartCanvas=document.getElementById('priceChart');
+      if(chartErr){
+        chartErr.textContent='Opção B3 detectada. Cotação/histórico não retornado pela API para este contrato. Use a Carteira para controlar quantidade e preço médio manualmente.';
+        chartErr.style.display='flex';
+      }
+      if(chartCanvas) chartCanvas.style.display='none';
+      setLS('Opção detectada: '+ticker+' · dados manuais/limitados');
+      return;
+    }
+    setLS('Erro: '+e.message);document.getElementById('tic-card').style.display='none';
+  }
 }
 function fillCard(ticker,q){
   document.getElementById('tic-card').style.display='block';
@@ -2224,7 +2307,7 @@ function updatePosBar(ticker,curPrice){
   const resPct=cur>0?(cur-ps.avgPrice)/ps.avgPrice*100:null;
   const rp=resNow!=null&&resNow>=0;
   inner.innerHTML=
-    pbi('Quantidade',ps.totalQty.toLocaleString('pt-BR')+'\u00A0ações')+pbid()+
+    pbi('Quantidade',ps.totalQty.toLocaleString('pt-BR')+'\u00A0'+(isB3OptionTicker(ticker)?'contratos':'ações'))+pbid()+
     pbi('P. Médio','R$'+ps.avgPrice.toFixed(2))+pbid()+
     pbi('Custo',fR(ps.totalCost))+pbid()+
     pbi('Atual',cur>0?'R$'+cur.toFixed(2):'—')+pbid()+
@@ -2238,7 +2321,7 @@ const pbiC=(l,v,p)=>'<div class="pbi"><div class="pbi-l">'+l+'</div><div class="
 
 /* ═══ WATCHLIST ═══════════════════════════════ */
 async function doAdd(){
-  const raw=document.getElementById('inp-ticker').value.trim().toUpperCase().replace('.SA','');
+  const raw=normalizeTickerInput(document.getElementById('inp-ticker').value);
   const tgt=parseFloat(document.getElementById('inp-target').value);
   const stp=parseFloat(document.getElementById('inp-stop').value);
   if(!raw||isNaN(tgt)||tgt<=0||isNaN(stp)||stp<=0)return;
@@ -2251,7 +2334,18 @@ async function doAdd(){
     Object.assign(S.cart[raw],enrichQ(raw,q),lv);
     renderChips();updateBadge();
     document.getElementById('inp-ticker').value='';S.lastLooked=null;
-  }catch(e){alert('Erro: '+e.message);}
+  }catch(e){
+    if(isB3OptionTicker(raw)){
+      const q=optionFallbackQuote(raw);
+      if(!S.cart[raw])S.cart[raw]={ticker:raw,name:q.shortName,sector:q.summaryProfile?.sector||'Derivativo / Opções',aportes:[],currentPrice:null,changePct:null,changeAbs:null,dividendYield:null,dividendsData:null,targetPct:tgt,stopPct:stp,isOption:true,optionMeta:q.optionMeta};
+      ensureOptionMeta(S.cart[raw],raw);
+      renderChips();updateBadge();saveData();
+      document.getElementById('inp-ticker').value='';S.lastLooked=null;
+      alert('Opção adicionada em modo manual. Para resultado financeiro, informe quantidade e preço na Carteira.');
+    }else{
+      alert('Erro: '+e.message);
+    }
+  }
   finally{btn.disabled=false;btn.textContent='+ Adicionar à Carteira + Análise IA';}
 }
 function renderChips(){
@@ -2284,6 +2378,17 @@ function toggleTDTPanel(){
 async function loadHist(ticker,range,ivl){
   S.activeTk=ticker;S.curRange=range;S.curIvl=ivl;
   document.querySelectorAll('.pbtn').forEach(b=>b.classList.toggle('active',b.dataset.range===range));
+  if(isB3OptionTicker(ticker)){
+    S.lastHist=[];
+    const chartErr=document.getElementById('chartError');
+    const chartCanvas=document.getElementById('priceChart');
+    if(chartErr){
+      chartErr.textContent='Opção B3 detectada. A brapi pode não disponibilizar histórico para contratos de opções no seu plano. Use a Carteira para controlar quantidade, preço médio e resultado manual.';
+      chartErr.style.display='flex';
+    }
+    if(chartCanvas) chartCanvas.style.display='none';
+    return;
+  }
   try{
     const h=await brapiGet(ticker,{range,interval:ivl});
     S.lastHist=h.historicalDataPrice||[];
@@ -2419,7 +2524,7 @@ async function triggerAnalysis(ticker){
 
 /* ═══ CART POSITION MANAGEMENT ═══════════════ */
 async function submitPos(){
-  const ticker=document.getElementById('cf-ticker').value.trim().toUpperCase().replace('.SA','').replace(/([A-Z])\1{2,}/g, '$1$1'); // max 2 consecutive same letters
+  const ticker=normalizeTickerInput(document.getElementById('cf-ticker').value).replace(/([A-Z])\1{2,}/g, '$1$1'); // max 2 consecutive same letters
   const qty=parseFloat(document.getElementById('cf-qty').value);
   const price=parseFloat(document.getElementById('cf-price').value);
   const date=document.getElementById('cf-date').value||new Date().toISOString().slice(0,10);
@@ -2427,9 +2532,11 @@ async function submitPos(){
   if(S.editMode){
     S.cart[S.editMode].aportes=[{qty,price,date}];
     if(S.editMode!==ticker){S.cart[ticker]={...S.cart[S.editMode],ticker};delete S.cart[S.editMode];}
+    if(isB3OptionTicker(ticker)) ensureOptionMeta(S.cart[ticker],ticker);
     cancelEdit();
   }else{
     if(!S.cart[ticker])S.cart[ticker]={ticker,name:ticker,sector:'',aportes:[],currentPrice:null,changePct:null,changeAbs:null,dividendYield:null,dividendsData:null};
+    if(isB3OptionTicker(ticker)) ensureOptionMeta(S.cart[ticker],ticker);
     S.cart[ticker].aportes.push({qty,price,date});
   }
   logInv('aporte',ticker,{qty,price:price.toFixed(2),total:(qty*price).toFixed(2),date,note:S.editMode?'Edição':'Novo aporte'});
@@ -2470,11 +2577,13 @@ async function refreshCart(){
         currentPrice:q.regularMarketPrice,
         changePct:q.regularMarketChangePercent,
         changeAbs:q.regularMarketChange,
-        name:q.shortName||t,
-        sector:q.summaryProfile?.sector||''
+        name:q.shortName||S.cart[t].name||t,
+        sector:q.summaryProfile?.sector||S.cart[t].sector||''
       });
+      if(isB3OptionTicker(t)) ensureOptionMeta(S.cart[t],t);
     }catch(e){
       // API failed for this ticker — keep existing cached data, don't wipe positions
+      if(isB3OptionTicker(t)) ensureOptionMeta(S.cart[t],t);
       console.warn('refreshCart failed for', t, e.message);
     }
     await new Promise(r=>setTimeout(r,300));
@@ -2495,10 +2604,15 @@ function renderPos(){
   const wrap=document.getElementById('pos-list'),tickers=Object.keys(S.cart);
   if(!tickers.length){wrap.innerHTML='<div style="text-align:center;padding:36px;color:var(--t3);font-size:.75rem">Nenhuma posição. Adicione acima.</div>';return;}
   wrap.innerHTML=tickers.map(t=>{
-    const e=S.cart[t],ps=calcPos(e),pos=ps.result!=null&&ps.result>=0,hpos=ps.hojeR!=null&&ps.hojeR>=0;
+    const e=S.cart[t];
+    if(isB3OptionTicker(t)) ensureOptionMeta(e,t);
+    const ps=calcPos(e),pos=ps.result!=null&&ps.result>=0,hpos=ps.hojeR!=null&&ps.hojeR>=0;
+    const isOpt=!!e.isOption;
+    const optBadge=isOpt?' <span class="badge b-y" title="Opção B3">OPÇÃO</span>':'';
+    const optMini=isOpt?'<div class="pos-chart-wrap" style="height:auto;min-height:34px;display:flex;align-items:center;color:var(--t4);font-family:var(--mono);font-size:.62rem">Contrato de opção: controle por preço informado manualmente. Histórico/cotação depende da cobertura da API.</div>':'<div class="pos-chart-wrap"><canvas id="pc-'+t+'"></canvas></div>';
     const ap=e.aportes.map((a,i)=>'<div class="arow"><span class="aqty">'+a.qty+'×</span><span class="aprice">R$'+a.price.toFixed(2)+'</span><span>'+a.date+'</span><span>=R$'+(a.qty*a.price).toFixed(2)+'</span><button class="adel" onclick="event.stopPropagation(); removeAporte(\''+t+'\','+i+')">✕</button></div>').join('');
     return '<div class="pos-row fu" onclick="openAnalysis(\''+t+'\')">'+
-      '<div class="pos-row-hdr"><div><div class="pos-tk">'+t+'</div><div class="pos-name">'+(e.name||'')+(e.sector?' · '+e.sector:'')+'</div></div>'+
+      '<div class="pos-row-hdr"><div><div class="pos-tk">'+t+optBadge+'</div><div class="pos-name">'+(e.name||'')+(e.sector?' · '+e.sector:'')+'</div></div>'+
       '<div class="pos-actions"><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); addAporteTo(\''+t+'\')">+ Aporte</button><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); editPos(\''+t+'\')">✏️</button><button class="btn btn-danger btn-xs" onclick="event.stopPropagation(); removePos(\''+t+'\')">✕</button></div></div>'+
       '<div class="pos-stats">'+
         pc('Qtd',ps.totalQty.toLocaleString('pt-BR'))+pc('P.Médio','R$'+ps.avgPrice.toFixed(2))+
@@ -2509,11 +2623,12 @@ function renderPos(){
       '</div>'+
       // Placeholder for trend/alert information; filled asynchronously after prices are fetched.
       '<div class="pos-alert" id="pos-alert-'+t+'" style="font-size:.65rem;padding:3px 0;color:var(--t3);"></div>'+
-      '<div class="pos-chart-wrap"><canvas id="pc-'+t+'"></canvas></div>'+
+      optMini+
       '<div class="aporte-list">'+ap+'</div>'+
     '</div>';
   }).join('');
   tickers.forEach(async(t,i)=>{
+    if(isB3OptionTicker(t)) return;
     await new Promise(r=>setTimeout(r,i*270));
     try{
       const h=await brapiGet(t,{range:'3mo',interval:'1d'});
@@ -4225,8 +4340,8 @@ setInterval(function() {
     <!-- LEFT -->
     <div>
       <div class="panel">
-        <div class="ptitle">Buscar Ativo B3</div>
-        <input class="inp" id="inp-ticker" type="text" placeholder="Digite o ticker — ex: PETR4" autocomplete="off" spellcheck="false" maxlength="10">
+        <div class="ptitle">Buscar Ativo B3 / Opções</div>
+        <input class="inp" id="inp-ticker" type="text" placeholder="Digite o ticker — ex: PETR4 ou PETRA360" autocomplete="off" spellcheck="false" maxlength="15">
         <div class="status-row"><div class="spin" id="lspin"></div><span id="lstxt">Aguardando ticker…</span></div>
         <div class="tic-card" id="tic-card">
           <div class="tic-name" id="tic-name">—</div>
@@ -4262,6 +4377,9 @@ setInterval(function() {
           <span class="qchip" data-t="RADL3">RADL3</span><span class="qchip" data-t="EGIE3">EGIE3</span>
           <span class="qchip" data-t="MGLU3">MGLU3</span><span class="qchip" data-t="VIVT3">VIVT3</span>
           <span class="qchip" data-t="ITSA4">ITSA4</span><span class="qchip" data-t="BBSE3">BBSE3</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:.58rem;color:var(--t4);margin-top:9px;line-height:1.6">
+          Opções B3 também são aceitas. Ex.: PETRA360, VALEA60. Se a API não retornar cotação/histórico, o sistema mantém o controle manual pela Carteira.
         </div>
       </div>
     </div>
