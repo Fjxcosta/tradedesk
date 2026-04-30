@@ -1067,84 +1067,80 @@ function switchTab(tab){
 
 <script>
 async function brapiGet(ticker, params = {}) {
-  // Construct the target URL with our API token and any additional parameters.
-  const p = new URLSearchParams({ token: getToken(), ...params });
-  const target = 'https://brapi.dev/api/quote/' + ticker + '?' + p;
+  const cleanTicker = String(ticker || '').trim().toUpperCase();
+  if (!cleanTicker) throw new Error('Ticker não informado');
 
-  // If the user has configured a Cloudflare Worker proxy (cfg.workerUrl),
-  // attempt to use it first. The Worker code bundled with this application
-  // exposes a `/brapi/:ticker` endpoint that forwards requests to
-  // brapi.dev while injecting permissive CORS headers. Using the proxy
-  // avoids CORS issues on GitHub Pages. If the proxy call fails we fall
-  // back to the generic public proxies defined below.
-  try {
-    if (typeof cfg !== 'undefined' && cfg.workerUrl && cfg.workerUrl.trim()) {
-      const base = cfg.workerUrl.replace(/\/*$/, '');
-      const url = base + '/brapi/' + encodeURIComponent(ticker) + (p.toString() ? '?' + p.toString() : '');
-      const resp = await fetch(url);
-      if (resp.ok) {
-        const data = await resp.json();
-        if (!data || data.error) throw new Error('"' + ticker + '" não encontrado');
-        const result = Array.isArray(data.results) ? data.results[0] : data;
-        if (result) return result;
-      }
-    }
-  } catch(e) {
-    // Ignore proxy errors and continue to other proxies.
-  }
+  const token = getToken();
+  const p = new URLSearchParams();
+  if (token) p.set('token', token);
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') p.set(k, v);
+  });
 
-  // Some browsers (notably when serving pages via GitHub Pages or other HTTPS
-  // domains) enforce strict CORS policies and brapi.dev does not currently
-  // return `Access‑Control‑Allow‑Origin` for arbitrary origins. To work
-  // around this we try a sequence of proxy URLs that inject permissive CORS
-  // headers. Each proxy has a slightly different URL format: the first entry
-  // uses the AllOrigins service which expects the target URL to be encoded
-  // after `?url=`, while the second uses the isomorphic-git CORS proxy which
-  // simply prepends the target URL. Additional proxies can be added here.
-  const proxies = [
-    // AllOrigins raw endpoint (works when the proxy itself is CORS‑enabled).
-    (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
-    // Isomorphic Git CORS proxy (prepend the URL without encoding). See
-    // https://isomorphic-git.org/blog/2018/07/23/isomorphic-git-dot-org-corporate-sponsors-and-a-new-CORS-proxy for details.
-    (url) => 'https://cors.isomorphic-git.org/' + url,
-    // Thingproxy freeboard (simple fetch proxy). This service requires the
-    // target URL to be appended after /fetch/.
-    (url) => 'https://thingproxy.freeboard.io/fetch/' + url,
-    // CORSProxy.io adds permissive CORS headers; note that it expects the full
-    // URL as a query parameter following `?` rather than path. See
-    // https://corsproxy.io for details.
-    (url) => 'https://corsproxy.io/?' + url
-  ];
+  const target = 'https://brapi.dev/api/quote/' + encodeURIComponent(cleanTicker) + (p.toString() ? '?' + p.toString() : '');
 
-  let lastError;
-  for (const proxy of proxies) {
-    const fetchUrl = proxy(target);
+  async function fetchJson(url, timeoutMs = 15000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(fetchUrl);
-      if (!res.ok) {
-        // Save the last error to report if all proxies fail.
-        lastError = new Error('Proxy HTTP ' + res.status);
-        continue;
-      }
-      const data = await res.json();
-      if (!data || data.error) {
-        lastError = new Error('"' + ticker + '" não encontrado');
-        continue;
-      }
-      // brapi.dev returns an object with a `results` array; ensure it's valid.
-      const result = Array.isArray(data.results) ? data.results[0] : data;
-      if (!result) {
-        lastError = new Error('"' + ticker + '" não encontrado');
-        continue;
-      }
-      return result;
-    } catch (err) {
-      // If fetch itself fails (network/CORS), record the error and try next proxy.
-      lastError = err;
+      const res = await fetch(url, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      if (!text) throw new Error('Resposta vazia');
+      return JSON.parse(text);
+    } finally {
+      clearTimeout(timer);
     }
   }
-  // If we reach here none of the proxies succeeded.
-  throw lastError || new Error('Falha ao obter dados de "' + ticker + '"');
+
+  function normalize(data) {
+    if (!data) return null;
+    if (data.error) throw new Error(data.message || data.error || 'Erro retornado pela API');
+    const result = Array.isArray(data.results) ? data.results[0] : data;
+    if (!result || result.error) return null;
+    return result;
+  }
+
+  const urls = [];
+
+  // 1) Proxy próprio configurado no app: opção mais estável contra CORS.
+  if (typeof cfg !== 'undefined' && cfg.workerUrl && cfg.workerUrl.trim()) {
+    const base = cfg.workerUrl.trim().replace(/\/*$/, '');
+    urls.push({
+      name: 'Cloudflare Worker',
+      url: base + '/brapi/' + encodeURIComponent(cleanTicker) + (p.toString() ? '?' + p.toString() : '')
+    });
+  }
+
+  // 2) Tentativa direta na brapi. Em HTTPS/local server pode funcionar sem proxy.
+  urls.push({ name: 'brapi direto', url: target });
+
+  // 3) Proxies públicos: usados apenas como contingência, pois podem oscilar.
+  urls.push(
+    { name: 'AllOrigins', url: 'https://api.allorigins.win/raw?url=' + encodeURIComponent(target) },
+    { name: 'isomorphic-git CORS', url: 'https://cors.isomorphic-git.org/' + target },
+    { name: 'Thingproxy', url: 'https://thingproxy.freeboard.io/fetch/' + target },
+    { name: 'CORSProxy.io', url: 'https://corsproxy.io/?' + encodeURIComponent(target) }
+  );
+
+  const errors = [];
+  for (const item of urls) {
+    try {
+      const data = await fetchJson(item.url);
+      const result = normalize(data);
+      if (result) return result;
+      errors.push(item.name + ': ativo não encontrado');
+    } catch (err) {
+      errors.push(item.name + ': ' + (err && err.name === 'AbortError' ? 'tempo esgotado' : (err && err.message ? err.message : err)));
+    }
+  }
+
+  throw new Error('Falha ao obter dados de ' + cleanTicker + '. ' + errors.slice(-3).join(' | '));
 }
 
 // Expose brapiGet globally so that functions defined in other scopes (e.g. inline
@@ -2292,7 +2288,15 @@ async function loadHist(ticker,range,ivl){
     const h=await brapiGet(ticker,{range,interval:ivl});
     S.lastHist=h.historicalDataPrice||[];
     redrawChart(ticker,S.cart[ticker]);
-  }catch(e){}
+  }catch(e){
+    S.lastHist=[];
+    const chartErr=document.getElementById('chartError');
+    if(chartErr){
+      chartErr.textContent='Não foi possível carregar o gráfico: '+(e && e.message ? e.message : 'falha de conexão/API.');
+    }
+    redrawChart(ticker,S.cart[ticker]);
+    setLS('Erro no gráfico: '+(e && e.message ? e.message : 'falha de conexão/API'));
+  }
 }
 function redrawChart(ticker,p){
   const raw=S.lastHist;
